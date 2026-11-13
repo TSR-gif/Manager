@@ -7,7 +7,7 @@ import path from "node:path";
  * How MyManager talks to Vercel's API: a token from Settings (.env.local VERCEL_TOKEN) if he set one, otherwise
  * the Vercel command-line tool's own sign-in on this PC, so signing in once with `vercel login` is all it takes.
  * The token is only ever sent to api.vercel.com; it's never shown, logged, or passed to a script or Claude session
- * (worker-env strips VERCEL_*; the guard should also block com.vercel.cli/auth.json, see scripts/guard.mjs).
+ * (worker-env strips VERCEL_*, and scripts/guard.mjs blocks Claude sessions from reading com.vercel.cli).
  */
 function cliDirs() {
   const home = os.homedir();
