@@ -244,3 +244,14 @@ Thomas plans to host MyManager online soon, so each fix assumes the app can be r
 - Tested on a copy with a stand-in coder:
   - **Loop:** the check failed, the fix was made in a separate copy on its own branch, the check passed, the review approved and the mission finished. His main folder was unchanged. A `npm run deploy` check was refused.
   - **Helper:** it woke on an approval, a "done" didn't stop it, `tell_thomas` sent, and stop worked.
+
+## 2026-11-14 · New look built into the app (the design Thomas approved)
+Thomas approved the v3 assistant design ("looks better", "push it"). It's now the real app. Nothing was removed; every feature has a place.
+- **Look.** Light and white, Geist font, a coloured emoji tile per helper. No status dots or lights.
+- **Sidebar (desktop):** Today, Calendar, Search; then Helpers (one per active project, with a count when it needs him); then Everything else (Money, Marketing, Ideas, Servers). His name at the bottom opens the menu: Weekly review, About you, Settings, Everything I'm working on, Approvals and history, Log out.
+- **Phone:** tabs at the bottom for Today, Helpers and Calendar; the ask box sits just above them.
+- **Today:** greeting, chips (need you, working, done for you, next on the calendar), then Needs you as one-line rows. Each row has the question, the amount and the buttons (Pay, Sign up, Send, Push, Run it… and Not now), or an answer box when it's a question. Below that is Working on with progress bars (focus blocks included), Done for you (folded, with Undo), and the ask box with quick buttons (Plan my day, Do the groceries, Check my projects, Pay a bill, Remind me…) and a mic.
+- **Helper page** (was the project page) has four tabs. Chat shows what it said and what it's waiting on. Activity holds jobs, to-dos, setup runs, weekly jobs, code and history. Schedule holds check-ins, always-on helpers, weekly jobs and the watch toggle. Rules holds his rules, what it does by itself and what it asks about, the brief, the folder and editing.
+- **New pages:** Helpers list, Calendar (reminders with a date, weekly jobs, focus blocks, two weeks ahead; no notes on people), Servers (each linked site and whether its last deploy is OK).
+- The Projects page now goes to Helpers. Search (Ctrl+K) knows every new page.
+- Checked: type check, lint and `npm test` pass; screens compared with the design on desktop and phone. Screenshots are in project files under manager/screenshots/redesign/built/.

@@ -41,7 +41,7 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
   const needsKey = backend === "api" && !process.env.ANTHROPIC_API_KEY;
 
   return (
-    <div className="fade-in grid gap-6 lg:grid-cols-[1fr_250px]">
+    <div className="pagewrap wide fade-in grid gap-6 lg:grid-cols-[1fr_250px]">
       <div className="min-w-0">
         <header className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3.5">

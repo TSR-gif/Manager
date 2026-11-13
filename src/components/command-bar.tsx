@@ -10,10 +10,13 @@ type Option = { id: string; label: string; hint?: string; icon: React.ComponentT
 const PAGES = [
   { href: "/", label: "Today", icon: CalendarCheck },
   { href: "/agent", label: "Assistant", icon: Sparkles },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/supervise", label: "Running", icon: Radar },
-  { href: "/approvals", label: "Approvals", icon: ShieldCheck },
-  ...MORE_ITEMS,
+  { href: "/helpers", label: "Helpers", icon: FolderKanban },
+  { href: "/calendar", label: "Calendar", icon: CalendarCheck },
+  { href: "/money", label: "Money", icon: Sparkles },
+  { href: "/marketing", label: "Marketing", icon: Sparkles },
+  { href: "/inbox", label: "Ideas", icon: Lightbulb },
+  { href: "/servers", label: "Servers", icon: Radar },
+  ...MORE_ITEMS.map((m) => ({ ...m, icon: m.href === "/approvals" ? ShieldCheck : m.href === "/supervise" ? Radar : Sparkles })),
 ];
 
 /** Ctrl/Cmd+K anywhere (or + on the phone): jump to a screen or project, ask the assistant, or add a task or idea. */
@@ -61,10 +64,10 @@ export function CommandBar({ projects = [] }: { projects?: { id: string; name: s
       else if (/^#\S+/.test(text)) out.push({ id: "ptask", label: "Add as a task on that project", icon: Hash, run: () => capture(text, "Task added to project") });
       else out.push({ id: "task", label: "Add as a task", hint: "Everyday", icon: ListTodo, run: () => capture(text, "Task added") });
     }
-    for (const p of projects.filter((x) => q && match(x.name)).slice(0, 4)) out.push({ id: `p-${p.id}`, label: p.name, hint: "Project", icon: FolderKanban, run: () => go(`/projects/${p.id}`) });
+    for (const p of projects.filter((x) => q && match(x.name)).slice(0, 4)) out.push({ id: `p-${p.id}`, label: p.name, hint: "Helper", icon: FolderKanban, run: () => go(`/projects/${p.id}`) });
     for (const p of PAGES.filter((x) => match(x.label))) out.push({ id: p.href, label: p.label, hint: "Go to", icon: p.icon, run: () => go(p.href) });
     // a name that matches a screen or project goes there first; otherwise asking is the default
-    if (q && out.length > 2 && (out[2].hint === "Project" || out[2].hint === "Go to") && out[2].label.toLowerCase().startsWith(q)) out.unshift(out.splice(2, 1)[0]);
+    if (q && out.length > 2 && (out[2].hint === "Helper" || out[2].hint === "Go to") && out[2].label.toLowerCase().startsWith(q)) out.unshift(out.splice(2, 1)[0]);
     return out.slice(0, 9);
   }, [text, projects]); // eslint-disable-line react-hooks/exhaustive-deps
 

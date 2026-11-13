@@ -24,7 +24,7 @@ export default async function Approvals() {
   const who = (r: string) => (r === "agent" ? (settings as { assistant_name?: string }).assistant_name || "MyManager" : "You");
 
   return (
-    <div className="fade-in mx-auto max-w-[620px] space-y-7 pt-2 md:pt-8">
+    <div className="pagewrap fade-in space-y-7">
       <header>
         <h1 className="display text-[26px] md:text-[28px]">Waiting for your OK</h1>
         <p className="mt-1 text-[14px] text-muted">{pending.length ? `${pending.length} thing${pending.length === 1 ? "" : "s"}.` : "Nothing right now."} {money(spent)} spent of {money(settings.monthly_cap_cents)} this month.</p>

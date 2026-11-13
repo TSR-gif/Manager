@@ -123,7 +123,7 @@ export default async function Marketing({ searchParams }: { searchParams: Promis
   const adTotals = pAds.reduce((t, c) => ({ spend: t.spend + c.spend_cents, installs: t.installs + c.installs }), { spend: 0, installs: 0 });
 
   return (
-    <div className="fade-in space-y-8">
+    <div className="pagewrap wide fade-in space-y-8">
       <header className="space-y-3">
         <div>
           <h1 className="display text-[26px] md:text-[30px]">Marketing</h1>

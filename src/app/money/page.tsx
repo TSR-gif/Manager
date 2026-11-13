@@ -40,7 +40,7 @@ export default async function MoneyPage() {
   const soon = live.filter((s) => s.next_renewal && s.next_renewal <= todayISO(7));
 
   return (
-    <div className="fade-in space-y-7">
+    <div className="pagewrap wide fade-in space-y-7">
       <header>
         <h1 className="display text-[26px] md:text-[30px]">Money</h1>
         <p className="mt-1 text-[14px] text-muted">What you&apos;re owed, what you&apos;ve earned, and what everything costs you each month.</p>

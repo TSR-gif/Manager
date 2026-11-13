@@ -72,7 +72,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const pct = Math.min(100, (spent / Math.max(1, s.monthly_cap_cents)) * 100);
 
   return (
-    <div className="fade-in mx-auto max-w-3xl space-y-5">
+    <div className="pagewrap fade-in space-y-5">
       <header>
         <h1 className="display text-[26px] md:text-[30px]">Settings</h1>
         <p className="mt-1 text-[14px] text-muted">Everything here is optional. {name} works without any of it.</p>

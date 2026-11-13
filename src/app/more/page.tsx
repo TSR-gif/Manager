@@ -1,37 +1,33 @@
 import Link from "next/link";
-import { ChevronRight, Lightbulb, Megaphone, Radar, RefreshCcw, Settings, ShieldCheck, UserRound, Wallet } from "lucide-react";
-import { getIdeas } from "@/lib/queries";
-
+import { ChevronRight } from "lucide-react";
+import { logout } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 
-export default async function More() {
-  const ideas = await getIdeas("inbox");
-  const rows = [
-    { href: "/supervise", icon: Radar, title: "What I'm working on", badge: 0 },
-    { href: "/approvals", icon: ShieldCheck, title: "Waiting for your OK", badge: 0 },
-    { href: "/inbox", icon: Lightbulb, title: "Ideas", badge: ideas.length },
-    { href: "/marketing", icon: Megaphone, title: "Marketing", badge: 0 },
-    { href: "/money", icon: Wallet, title: "Money", badge: 0 },
-    { href: "/review", icon: RefreshCcw, title: "Weekly review", badge: 0 },
-    { href: "/me", icon: UserRound, title: "About you", badge: 0 },
-    { href: "/settings", icon: Settings, title: "Settings", badge: 0 },
-  ];
+const ROWS = [
+  { href: "/review", emoji: "🔁", bg: "#e6efff", title: "Weekly review", sub: "How the week went and what's next" },
+  { href: "/me", emoji: "🙂", bg: "#fdf1dc", title: "About you", sub: "What MyManager remembers about you" },
+  { href: "/settings", emoji: "⚙️", bg: "#eef0f3", title: "Settings", sub: "Messages, quiet hours, phone, PC access, spending limits" },
+  { href: "/supervise", emoji: "🛠️", bg: "#e4f6ec", title: "Everything I'm working on", sub: "Every job, step and live output" },
+  { href: "/approvals", emoji: "✅", bg: "#f6f6f4", title: "Approvals and history", sub: "Everything you've said yes or no to, and what I did" },
+];
+
+/** The menu under Thomas's name. */
+export default function More() {
   return (
-    <div className="fade-in mx-auto max-w-[620px] space-y-4 pt-2 md:pt-8">
-      <h1 className="display text-[26px] md:text-[30px]">More</h1>
-      <ul className="card divide-y divide-line !p-0">
-        {rows.map((r) => (
-          <li key={r.href}>
-            <Link href={r.href} className="flex min-h-[56px] items-center gap-3 px-4 py-3 active:bg-panel2">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-panel3 text-muted"><r.icon size={17} /></div>
-              <div className="min-w-0 flex-1 text-[15px] font-medium">{r.title}</div>
-              {!!r.badge && <span className="grid h-6 min-w-6 place-items-center rounded-full bg-accent px-2 text-[12px] font-bold text-white">{r.badge}</span>}
-              <ChevronRight size={18} className="text-faint" />
-            </Link>
-          </li>
-        ))}
-      </ul>
+    <div className="pagewrap fade-in">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="grid h-12 w-12 place-items-center rounded-full bg-[#e6dccd] text-[18px] font-semibold text-[#6b5434]">T</span>
+        <h1 className="ttl !m-0">Thomas</h1>
+      </div>
+      {ROWS.map((r) => (
+        <Link key={r.href} href={r.href} className="hrow">
+          <div className="tile" style={{ background: r.bg }}>{r.emoji}</div>
+          <div className="tx"><b>{r.title}</b><span>{r.sub}</span></div>
+          <ChevronRight size={18} className="text-faint" />
+        </Link>
+      ))}
+      <form action={logout} className="mt-6"><button className="btn">Log out</button></form>
     </div>
   );
 }

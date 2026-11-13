@@ -13,7 +13,7 @@ export default async function Inbox() {
   const promoted = ideas.filter((i) => i.status === "promoted").length;
 
   return (
-    <div className="fade-in space-y-7">
+    <div className="pagewrap fade-in space-y-7">
       <header>
         <h1 className="display text-[26px] md:text-[30px]">Ideas</h1>
         <p className="mt-1 max-w-xl text-[14px] text-muted">Get ideas out of your head so they stop pulling you off what matters. Each one gets a decision: make it a project, park it, or kill it.</p>

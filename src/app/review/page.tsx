@@ -44,7 +44,7 @@ export default async function Review() {
   const usageList = [...usage.entries()].sort((x, y) => y[1].phone + y[1].desktop - (x[1].phone + x[1].desktop));
 
   return (
-    <div className="fade-in space-y-6">
+    <div className="pagewrap fade-in space-y-6">
       <header>
         <h1 className="display text-[26px] md:text-[30px]">Weekly review</h1>
         <p className="mt-1 text-[14px] text-muted">Last done {ago(settings.last_review_at)}. Ten minutes, once a week, keeps everything else honest.</p>

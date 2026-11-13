@@ -129,7 +129,7 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
   };
 
   return (
-    <div className="fade-in mx-auto max-w-[620px] space-y-7 pt-2 md:pt-8">
+    <div className="pagewrap fade-in space-y-7">
       <header>
         <h1 className="display text-[26px] md:text-[28px]">What I&apos;m working on</h1>
         <p className="mt-1 text-[14px] text-muted">I&apos;ll tell you when I need you. To give me a new job, just ask.</p>

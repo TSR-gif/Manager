@@ -19,7 +19,7 @@ export default async function MePage() {
   const name = (s?.assistant_name as string) || "MyManager";
 
   return (
-    <div className="fade-in space-y-6">
+    <div className="pagewrap fade-in space-y-6">
       <header>
         <h1 className="display text-[26px] md:text-[30px]">What {name} knows about you</h1>
         <p className="mt-1 max-w-2xl text-[14px] text-muted">
