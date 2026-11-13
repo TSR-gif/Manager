@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandProblem, isReadOnlyCommand } from "../src/lib/command-safety.mjs";
@@ -70,7 +71,7 @@ test("guard never lets secret files be read", () => {
 
 test("guard only lets the coder change files in its own folder", () => {
   assert.equal(guard("Write", { file_path: path.join(ROOT, "x.txt") }), 2); // no work folder: read-only session
-  const work = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR || "/tmp"), "mm-guard-"));
+  const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "mm-guard-"));
   assert.equal(guard("Write", { file_path: path.join(work, "new.txt") }, { MANAGER_GUARD_DIR: work }), 0);
   assert.equal(guard("Write", { file_path: path.join(ROOT, "x.txt") }, { MANAGER_GUARD_DIR: work }), 2);
   fs.rmSync(work, { recursive: true, force: true });

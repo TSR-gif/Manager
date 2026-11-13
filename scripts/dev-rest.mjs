@@ -18,7 +18,7 @@ async function openDb() {
     return;
   }
   const { PGlite } = await import("@electric-sql/pglite");
-  const dir = path.join(ROOT, ".localdb");
+  const dir = process.env.LOCALDB_DIR || path.join(ROOT, ".localdb"); // tests use a throwaway folder
   const fresh = !fs.existsSync(dir);
   const db = new PGlite(dir, { parsers: { 1082: (v) => v } });
   await db.waitReady;
@@ -31,8 +31,11 @@ async function openDb() {
     for (const f of fs.readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort()) {
       if (done.has(f)) continue;
       const sql = fs.readFileSync(path.join(migDir, f), "utf8").replace(/^create extension.*$/gim, "");
-      await db.exec(sql);
-      await db.query("insert into _local_migrations (name) values ($1)", [f]);
+      // The change and the note that it's applied go in together, or neither does (no half-applied migrations).
+      await db.transaction(async (tx) => {
+        await tx.exec(sql);
+        await tx.query("insert into _local_migrations (name) values ($1)", [f]);
+      });
       console.log("applied", f);
     }
   };
@@ -104,9 +107,35 @@ async function body(req) {
   return t ? JSON.parse(t) : null;
 }
 
+// Only MyManager itself may use the database: it sends this key (SUPABASE_SERVICE_ROLE_KEY). scripts/local.mjs
+// makes a random one per PC, and coding helpers never get it, so they can't edit approvals behind the app's back.
+const DB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const keyOk = (req) => {
+  const k = String(req.headers["apikey"] ?? "") || String(req.headers["authorization"] ?? "").replace(/^Bearer\s+/i, "");
+  if (!DB_KEY || k.length !== DB_KEY.length) return false;
+  let d = 0;
+  for (let i = 0; i < k.length; i++) d |= k.charCodeAt(i) ^ DB_KEY.charCodeAt(i);
+  return d === 0;
+};
+// Database functions the app may call (supabase-js .rpc()). Listed here so nothing else can be called.
+const RPC = new Set(["mm_queue_paid_action", "mm_claim_action", "mm_budget_used"]);
+
 const server = http.createServer(async (req, res) => {
   try {
+    if (!keyOk(req)) { res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ message: "Missing or wrong database key" })); return; }
     const url = new URL(req.url, "http://x");
+    const rpc = url.pathname.match(/^\/(?:rest\/v1\/)?rpc\/([a-z_]+)$/);
+    if (rpc) {
+      if (req.method !== "POST" || !RPC.has(rpc[1])) { res.writeHead(404).end(); return; }
+      const args = (await body(req)) ?? {};
+      const keys = Object.keys(args).filter((k) => /^p_[a-z_]+$/.test(k));
+      const v = keys.map((k) => (args[k] !== null && typeof args[k] === "object" ? JSON.stringify(args[k]) : args[k]));
+      const out = (await pool.query(`select * from ${ident(rpc[1])}(${keys.map((k, i) => `${k} => $${i + 1}`).join(", ")})`, v)).rows;
+      // a function that returns one value comes back as that value, like PostgREST
+      const scalar = out.length === 1 && Object.keys(out[0]).length === 1 && Object.keys(out[0])[0] === rpc[1];
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(scalar ? out[0][rpc[1]] : out));
+      return;
+    }
     const table = ident(url.pathname.replace(/^\/(rest\/v1\/)?/, ""));
     const p = url.searchParams;
     const prefer = req.headers["prefer"] ?? "";

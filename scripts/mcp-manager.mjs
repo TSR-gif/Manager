@@ -1,10 +1,10 @@
 // MCP bridge (stdio): exposes Manager's assistant tools to the Claude Code app on this PC.
-// Started automatically by Manager when AGENT_BACKEND=claude-code. Needs MANAGER_URL and MANAGER_KEY.
+// Started automatically by Manager when AGENT_BACKEND=claude-code. Needs MANAGER_URL and MANAGER_TOOL_TOKEN (a pass for one run, see toolToken() in src/lib/auth.ts).
 import readline from "node:readline";
 
 const URL_BASE = process.env.MANAGER_URL ?? "http://127.0.0.1:3000";
-const KEY = process.env.MANAGER_KEY ?? "";
-const headers = { "Content-Type": "application/json", "x-manager-key": KEY };
+const TOKEN = process.env.MANAGER_TOOL_TOKEN ?? "";
+const headers = { "Content-Type": "application/json", "x-manager-tool": TOKEN };
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 
 const rl = readline.createInterface({ input: process.stdin });

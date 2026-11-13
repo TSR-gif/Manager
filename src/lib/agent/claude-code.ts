@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { db } from "@/lib/db";
-import { managerKey } from "@/lib/auth";
+import { toolToken } from "@/lib/auth";
 import { liveRuns } from "@/lib/agent/live";
 import { guarded } from "@/lib/agent/guard";
 import { AGENT_TOOLS } from "./tools";
@@ -65,7 +65,8 @@ export async function runClaudeCode(
     manager: {
       command: process.execPath,
       args: [path.join(root, "scripts", "mcp-manager.mjs")],
-      env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://127.0.0.1:${port}`, MANAGER_KEY: await managerKey() },
+      // a pass for this run only: it can call the assistant tools, nothing else (no approving, no phone-bot API)
+      env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://127.0.0.1:${port}`, MANAGER_TOOL_TOKEN: await toolToken(id) },
     },
   };
   // Thomas: "should have full access to my pc". It can read any folder and run read-only commands without asking.

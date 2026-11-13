@@ -33,16 +33,10 @@ export async function getActions(status?: Action["status"][]): Promise<Action[]>
 export async function getSettings(): Promise<Settings> {
   return unwrap(await db().from("settings").select("*").eq("id", 1).single());
 }
-/** Spend this month. includePending also counts paid actions still waiting for his OK. */
+/** Spend this month (in Thomas's time zone, by when it was approved). includePending also counts paid actions
+ *  still waiting for his OK. Worked out by the same database function the spend caps use. */
 export async function monthSpendCents(opts: { includePending?: boolean } = {}): Promise<number> {
-  const start = new Date();
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
-  const rows: { cost_cents: number }[] = unwrap(
-    await db().from("actions").select("cost_cents")
-      .in("status", opts.includePending ? ["pending", "approved", "executed"] : ["approved", "executed"]).gte("created_at", start.toISOString()),
-  );
-  return rows.reduce((s, r) => s + r.cost_cents, 0);
+  return Number(unwrap(await db().rpc("mm_budget_used", { p_exclude: null, p_include_pending: !!opts.includePending })) ?? 0);
 }
 
 /** Tasks completed and focus minutes since local midnight (Melbourne). */

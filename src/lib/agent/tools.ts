@@ -34,13 +34,14 @@ export const AGENT_TOOLS: Tool[] = [
   {
     name: "draft_runbook",
     description: `Plan a list of steps MyManager will carry out on Thomas's PC and watch, e.g. "start the Saturday job, close the queue, commit and push, delete the old venv", or setting up a service (sign-ins handed to him). It goes to Approvals as one list; nothing runs until he approves. Deleting folders and any command that isn't read-only ask him again at that step. Step kinds:
-- start_job: file (a .bat/.cmd/.py/.ps1 in the project folder), expect_hours. Runs it in the background, keeps the PC awake, watches its output, tells him when it finishes or stalls.
+- start_job: file (a .bat/.cmd/.py/.ps1 in the project folder), expect_hours. Runs it in the background, keeps the PC awake, watches its output, tells him when it finishes or stalls. The steps after it wait until it finishes successfully; set independent: true only if they really don't need its result.
 - stop_process: match (e.g. "run_queue"): closes that program if it's running from the project.
 - git_commit_push: message. Commits everything new in the project folder (skips .env/key files and venv folders, stops if it sees secrets) and pushes the current branch.
 - delete_folder: path (inside the project folder).
 - open_link: url (https) opens it in his browser.
-- handoff: text (what he needs to do), optional url or command (a sign-in command like "vercel login" opened in a window for him), blocking (false = "only if needed"). Use this for anything that needs a password, 2FA, payment or a choice only he can make.
+- handoff: text (what he needs to do), optional url or command (only a sign-in: gh auth login, vercel login, supabase login or npm login, opened in a window for him), blocking (false = "only if needed"). Use this for anything that needs a password, 2FA, payment or a choice only he can make.
 - run_command: command (git, gh, npm, npx, node, py, pip, vercel, supabase, claude or winget only).
+Steps run in order; if one fails, the ones after it are held until Thomas says retry, skip or stop.
 Set optional: true for steps he called optional. Never put passwords or keys in steps.`,
     input_schema: {
       type: "object",
@@ -49,7 +50,7 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
         steps: { type: "array", items: { type: "object", properties: {
           kind: { type: "string", enum: ["start_job", "stop_process", "git_commit_push", "delete_folder", "open_link", "handoff", "run_command"] },
           label: str, file: str, expect_hours: { type: "number" }, match: str, message: str, path: str, url: str, text: str, command: str,
-          blocking: { type: "boolean" }, optional: { type: "boolean" },
+          blocking: { type: "boolean" }, optional: { type: "boolean" }, independent: { type: "boolean" },
         }, required: ["kind", "label"] } },
       },
       required: ["project_name", "title", "steps"],
@@ -628,7 +629,10 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!m) return { label: "No such mission", result: "Mission not found.", isError: true };
         await db().from("missions").update({ last_update: String(input.update).slice(0, 400) }).eq("id", input.mission_id);
         if (input.status === "done" && !m.ongoing) {
-          const { finishMission } = await import("@/lib/missions");
+          // The server decides whether it's really finished, not the model's say-so.
+          const { finishMission, whyNotFinished } = await import("@/lib/missions");
+          const why = await whyNotFinished(input.mission_id as string);
+          if (why) return { label: "Not finished yet", result: `Saved the update, but the mission stays open: ${why}`, isError: true };
           await finishMission(input.mission_id as string, "done");
         }
         return { label: input.status === "done" && !m.ongoing ? "Mission finished" : "Noted where it's at", result: m.ongoing && input.status === "done" ? "Saved. Helpers keep going until Thomas stops them." : "Saved." };

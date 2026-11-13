@@ -6,6 +6,7 @@ import path from "node:path";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
 import { guarded } from "@/lib/agent/guard";
+import { workerEnv } from "@/lib/worker-env";
 import { askThomas, finishMission, logMission, shortId, startCodingStep, type Mission } from "@/lib/missions";
 
 /**
@@ -26,26 +27,39 @@ const git = (cwd: string, args: string[]) => new Promise<{ ok: boolean; out: str
   execFile("git", args, { cwd, timeout: 60_000, windowsHide: true }, (e, so, se) => resolve({ ok: !e, out: `${so}${se}`.trim() }));
 });
 
-/** A separate working copy for this mission: ~/.mymanager/worktrees/<id>, on branch mymanager/<id>. */
+/** A separate working copy for this mission: ~/.mymanager/worktrees/<id>, on branch mymanager/<id>.
+ *  Throws (with a plain reason) when it can't make one: work never falls back to Thomas's own folder.
+ *  Records the commit it started from (base_sha), which the review compares against. */
 export async function ensureWorktree(m: Mission): Promise<{ dir: string; note?: string }> {
-  if (!m.work_dir) throw new Error("No folder");
-  if (m.worktree && fs.existsSync(m.worktree)) return { dir: m.worktree };
-  const top = await git(m.work_dir, ["rev-parse", "--show-toplevel"]);
-  if (!top.ok) return { dir: m.work_dir, note: "Not a git folder, so it works in the folder itself." };
+  if (!m.work_dir) throw new Error("the mission has no project folder");
   const id = shortId(m.id);
   const branch = `mymanager/${id}`;
+  if (m.worktree && fs.existsSync(m.worktree)) {
+    const on = await git(m.worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (on.ok && on.out.trim() === branch) return { dir: m.worktree };
+    throw new Error(`its separate copy at ${m.worktree} isn't on ${branch} any more`);
+  }
+  const top = await git(m.work_dir, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok) throw new Error(`${m.work_dir} isn't a git project, so there's no safe separate copy to work in`);
+  const head = await git(m.work_dir, ["rev-parse", "HEAD"]);
+  if (!head.ok) throw new Error("the project has no commits yet");
   const dir = path.join(os.homedir(), ".mymanager", "worktrees", id);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const exists = (await git(m.work_dir, ["branch", "--list", branch])).out.length > 0;
   const r = await git(m.work_dir, exists ? ["worktree", "add", dir, branch] : ["worktree", "add", "-b", branch, dir]);
-  if (!r.ok) return { dir: m.work_dir, note: `Couldn't make a separate copy (${r.out.slice(0, 160)}), so it works in the folder on its own branch.` };
-  await db().from("missions").update({ worktree: dir }).eq("id", m.id);
-  return { dir, note: `Working in a separate copy at ${dir}, so your own folder isn't touched.` };
+  if (!r.ok) throw new Error(`git couldn't make a separate copy: ${r.out.slice(0, 160)}`);
+  const base = m.base_sha ?? (exists ? (await git(m.work_dir, ["merge-base", branch, "HEAD"])).out.trim() : head.out.trim());
+  await db().from("missions").update({ worktree: dir, base_sha: base || null }).eq("id", m.id);
+  Object.assign(m, { worktree: dir, base_sha: base || null });
+  const deps = fs.existsSync(path.join(dir, "package.json")) && !fs.existsSync(path.join(dir, "node_modules"))
+    ? " It doesn't have node_modules yet, so the first step may need npm install." : "";
+  return { dir, note: `Working in a separate copy at ${dir} (from commit ${base.slice(0, 7)}), so your own folder isn't touched.${deps}` };
 }
 
 function run(cmd: string, cwd: string, ms = 15 * 60_000) {
   return new Promise<{ code: number; out: string }>((resolve) => {
-    const child = spawn(cmd, { cwd, shell: true, windowsHide: true, env: { ...process.env, CI: "1", FORCE_COLOR: "0" } });
+    // The check runs the project's own scripts, so it gets none of MyManager's keys or tokens.
+    const child = spawn(cmd, { cwd, shell: true, windowsHide: true, env: workerEnv({ CI: "1", FORCE_COLOR: "0" }) });
     let out = "";
     const add = (d: Buffer) => { out = (out + d.toString()).slice(-20_000); };
     child.stdout.on("data", add); child.stderr.on("data", add);
@@ -91,18 +105,21 @@ export async function loopRound(id: string, note?: string) {
   looping.add(id);
   try {
     const { data } = await db().from("missions").select("*").eq("id", id).maybeSingle();
-    const m = data as (Mission & { done_check: string | null; rounds: number; max_rounds: number; worktree: string | null }) | null;
+    const m = data as (Mission & { done_check: string | null; rounds: number; max_rounds: number; worktree: string | null; base_sha: string | null }) | null;
     if (!m || !m.done_check || m.status !== "running" || !m.can_code || m.worker === "working") return;
     if (!isSafeCheck(m.done_check)) { await askThomas(id, `The check "${m.done_check}" isn't one I'm allowed to run over and over. What test or build command should I use instead?`); return; }
-    const wt = await ensureWorktree(m);
-    if (wt.note && !m.worktree) await logMission(id, "note", wt.note);
+    const hadCopy = !!m.worktree;
+    const wt = await ensureWorktree(m).catch((e: Error) => ({ dir: "", note: e.message }));
+    if (!wt.dir) { await askThomas(id, `I couldn't make a separate copy of the project to work in (${wt.note}), so I haven't touched your folder. What should I do?`); return; }
+    if (wt.note && !hadCopy) await logMission(id, "note", wt.note);
     const ran = await run(m.done_check, wt.dir);
     const passed = ran.code === 0;
     await logMission(id, "check", `${m.done_check}: ${passed ? "passes" : "fails"} (round ${m.rounds + 1} of ${m.max_rounds})`);
     await db().from("missions").update({ last_check_at: new Date().toISOString(), next_check_at: new Date(Date.now() + (m.check_every_minutes || 60) * 60_000).toISOString(), last_update: passed ? "Check passes, getting it reviewed" : `Round ${m.rounds + 1}: check still failing, fixing it` }).eq("id", id);
 
-    if (m.rounds >= m.max_rounds) {
-      await askThomas(id, `I've had ${m.max_rounds} goes and "${m.done_check}" ${passed ? "passes, but the review still wants changes" : "still fails"}. Last thing it said: ${tail(ran.out, 300).split("\n").filter(Boolean).pop() ?? ""}. Keep going, change the plan, or stop?`);
+    const outOfRounds = m.rounds >= m.max_rounds;
+    if (!passed && outOfRounds) {
+      await askThomas(id, `I've had ${m.max_rounds} goes and "${m.done_check}" still fails. Last thing it said: ${tail(ran.out, 300).split("\n").filter(Boolean).pop() ?? ""}. Keep going, change the plan, or stop?`);
       return;
     }
     if (!passed) {
@@ -110,15 +127,38 @@ export async function loopRound(id: string, note?: string) {
       await startCodingStep(id, `${note ? `Thomas said: ${note}\n` : ""}Make \`${m.done_check}\` pass for the job "${m.goal}". Fix the real cause; never skip, delete or weaken tests to get green. Here is the end of the failing output:\n${tail(ran.out)}`);
       return;
     }
-    const base = (await git(wt.dir, ["merge-base", "HEAD", "origin/HEAD"])).out.split("\n")[0] || (await git(wt.dir, ["rev-parse", "HEAD~1"])).out || "HEAD~1";
+    // Passing isn't enough: there has to be new work since the mission started (a check that already passed
+    // doesn't prove the job was done), and the reviewer has to approve exactly this commit.
+    const base = m.base_sha || (await git(wt.dir, ["merge-base", "HEAD", "origin/HEAD"])).out.split("\n")[0];
+    if (!base) { await askThomas(id, "I can't tell which commit this work started from, so I can't review it safely. Should I start it again?"); return; }
+    const head = (await git(wt.dir, ["rev-parse", "HEAD"])).out.trim();
+    const dirty = (await git(wt.dir, ["status", "--porcelain"])).out.trim();
+    if (head === base.trim()) {
+      if (outOfRounds) { await askThomas(id, `"${m.done_check}" passes, but nothing has been changed yet, so it doesn't show the job "${m.goal}" is done. Keep going, change the check, or stop?`); return; }
+      await db().from("missions").update({ rounds: m.rounds + 1 }).eq("id", id);
+      await startCodingStep(id, `${note ? `Thomas said: ${note}\n` : ""}\`${m.done_check}\` already passes, but the job "${m.goal}" isn't done yet: nothing has been committed since the start. Do the job, keep the check passing, and commit.`);
+      return;
+    }
+    if (dirty) {
+      await db().from("missions").update({ rounds: m.rounds + 1 }).eq("id", id);
+      await startCodingStep(id, `There are changes that aren't committed. Commit them (or undo them if they're not needed), keep \`${m.done_check}\` passing.`);
+      return;
+    }
     const rv = await review(m, wt.dir, base.trim());
-    await logMission(id, "review", `${rv.ok ? "Approved" : "Changes asked"}: ${rv.text}`);
+    await logMission(id, "review", `${rv.ok ? "Approved" : "Changes asked"} (commit ${head.slice(0, 7)}): ${rv.text}`);
+    const moved = (await git(wt.dir, ["rev-parse", "HEAD"])).out.trim() !== head;
+    if (rv.ok && moved) { await logMission(id, "note", "The branch changed while it was being reviewed, so I'll check and review it again."); setTimeout(() => { void loopRound(id).catch(() => {}); }, 2000); return; }
+    if (!rv.ok && outOfRounds) {
+      await askThomas(id, `I've had ${m.max_rounds} goes. "${m.done_check}" passes, but the review still wants changes: ${rv.text}. Keep going, change the plan, or stop?`);
+      return;
+    }
     if (!rv.ok) {
       await db().from("missions").update({ rounds: m.rounds + 1 }).eq("id", id);
       await startCodingStep(id, `The reviewer asked for changes: ${rv.text}\nMake them, keep \`${m.done_check}\` passing, and commit.`);
       return;
     }
-    await db().from("missions").update({ last_update: `Done: "${m.done_check}" passes and the review approved it. Branch mymanager/${shortId(id)} is ready.` }).eq("id", id);
+    await db().from("missions").update({ last_update: `Done: "${m.done_check}" passes and the review approved commit ${head.slice(0, 7)}. Branch mymanager/${shortId(id)} is ready.` }).eq("id", id);
+    await logMission(id, "check", `Verified: ${m.done_check} passed at commit ${head} and the review approved that commit.`);
     await finishMission(id, "done");
     const { remember } = await import("@/lib/project-notes");
     await remember(m.project_id, `Loop "${m.goal.slice(0, 80)}" finished in ${m.rounds + 1} round(s); check: ${m.done_check}. Review: ${rv.text}`).catch(() => {});

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { COOKIE, managerKey, sameText, sessionToken } from "@/lib/auth";
+import { checkToolToken, COOKIE, managerKey, sameText, sessionToken } from "@/lib/auth";
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -9,8 +9,13 @@ export async function middleware(req: NextRequest) {
   if (!process.env.APP_PASSWORD) {
     return new NextResponse("APP_PASSWORD is not configured", { status: 500 });
   }
-  // local MCP bridge authenticates with a header instead of the cookie (checked again in the route)
-  if (["/api/agent/tool", "/api/bot", "/api/proactive"].includes(pathname) && sameText(req.headers.get("x-manager-key"), await managerKey())) return NextResponse.next();
+  // MyManager's own helpers send a header instead of the cookie (checked again in each route):
+  // the phone bot and the 5-minute tick use the helper key; a Claude session only gets a pass for its own run's tools.
+  if (["/api/bot", "/api/proactive"].includes(pathname) && sameText(req.headers.get("x-manager-key"), await managerKey())) return NextResponse.next();
+  if (pathname === "/api/agent/tool") {
+    if (await checkToolToken(req.headers.get("x-manager-tool"))) return NextResponse.next();
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
   const token = req.cookies.get(COOKIE)?.value;
   if (sameText(token, await sessionToken())) return NextResponse.next();
   const url = req.nextUrl.clone();

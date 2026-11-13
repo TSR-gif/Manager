@@ -16,7 +16,7 @@ export interface Mission {
   question: string | null; last_update: string | null; check_every_minutes: number; next_check_at: string | null;
   last_check_at: string | null; checks: number; work_dir: string | null; can_code: boolean; worker: "idle" | "working";
   created_at: string; finished_at: string | null;
-  done_check?: string | null; rounds?: number; max_rounds?: number; worktree?: string | null;
+  done_check?: string | null; rounds?: number; max_rounds?: number; worktree?: string | null; base_sha?: string | null;
   ongoing?: boolean; wake_on?: string[];
 }
 export interface MissionLog { id: string; mission_id: string; kind: string; text: string; created_at: string }
@@ -141,6 +141,13 @@ export async function runDueMissions() {
   if (busy) return [];
   busy = true;
   try {
+    // After a restart no coder is really running: put "working" missions back to idle so they don't hang forever.
+    const { data: stale } = await db().from("missions").select("id").eq("worker", "working");
+    for (const s of (stale ?? []) as { id: string }[]) {
+      if (coders.has(s.id) || starting.has(s.id)) continue;
+      await db().from("missions").update({ worker: "idle" }).eq("id", s.id).eq("worker", "working");
+      await logMission(s.id, "note", "The coder was interrupted (MyManager restarted). Anything it didn't commit is still in its copy of the project.");
+    }
     const { data } = await db().from("missions").select("id,next_check_at,worker,done_check,can_code").eq("status", "running");
     const due = ((data ?? []) as Pick<Mission, "id" | "next_check_at" | "worker" | "done_check" | "can_code">[])
       .filter((m) => m.worker !== "working" && (!m.next_check_at || new Date(m.next_check_at).getTime() <= Date.now()));
@@ -180,8 +187,24 @@ export async function askThomas(id: string, question: string) {
   return true;
 }
 
+/** Why a mission can't be marked done yet (null if it can): every step finished, no coder still working,
+ *  and loops only finish through their own check and review (lib/loops.ts), never by an agent saying so. */
+export async function whyNotFinished(id: string): Promise<string | null> {
+  const { data: m } = await db().from("missions").select("status,worker,done_check,can_code").eq("id", id).maybeSingle();
+  if (!m) return "mission not found.";
+  if (m.status === "done" || m.status === "stopped") return `it's already ${m.status}.`;
+  if (m.done_check && m.can_code) return `this one finishes on its own once \`${m.done_check}\` passes and the review approves the commit.`;
+  if (m.worker === "working" || coders.has(id)) return "the coder is still working on a step.";
+  const { data: steps } = await db().from("tasks").select("title,status").eq("mission_id", id);
+  const open = ((steps ?? []) as { title: string; status: string }[]).filter((s) => s.status !== "done");
+  if (open.length) return `these steps aren't done: ${open.map((s) => s.title).slice(0, 5).join("; ")}. Tick each off with complete_task once you can see it's really done.`;
+  return null;
+}
+
 export async function finishMission(id: string, status: "done" | "stopped") {
   await db().from("missions").update({ status, question: null, finished_at: new Date().toISOString() }).eq("id", id);
+  // Stop means stop: end a coder that's still working on this mission (and everything it started).
+  if (status === "stopped" && stopCoder(id)) await logMission(id, "note", "Stopped the coder that was still working.");
   await logMission(id, status === "done" ? "done" : "note", status === "done" ? "Finished." : "Stopped by you.");
   if (status === "done") {
     const { data: m } = await db().from("missions").select("goal,project_id").eq("id", id).maybeSingle();
@@ -200,20 +223,48 @@ const CODER_TOOLS = [
 ];
 const CODER_DENY = ["Bash(git push:*)", "Bash(git reset --hard:*)", "Bash(rm -rf:*)", "Bash(del /s:*)", "WebFetch", "Task"];
 
+/** Coders running in this server, by mission, so Stop can end them. */
+const coders = ((globalThis as unknown as { __mmCoders?: Map<string, import("node:child_process").ChildProcess> }).__mmCoders ??= new Map());
+
+const starting = new Set<string>(); // claimed, still setting up its copy
+
+/** Ends the coder working on a mission, with everything it started. Returns true if one was running. */
+export function stopCoder(id: string) {
+  const child = coders.get(id);
+  if (!child?.pid) return false;
+  coders.delete(id);
+  if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {});
+  else { try { process.kill(-child.pid, "SIGTERM"); } catch { child.kill("SIGTERM"); } }
+  return true;
+}
+
 export async function startCodingStep(id: string, instructions: string): Promise<string> {
   const { data } = await db().from("missions").select("*").eq("id", id).maybeSingle();
   const m = data as Mission | null;
   if (!m) return "No such mission.";
+  if (m.status !== "running") return `Not started: the mission is ${m.status === "waiting" ? "waiting for Thomas's answer" : m.status}.`;
   if (!m.can_code || !m.work_dir) return "Not allowed: Thomas hasn't approved coding for this mission.";
-  if (m.worker === "working") return "The coder is already working on a step. Check back later.";
   if (!fs.existsSync(m.work_dir)) return `The folder ${m.work_dir} doesn't exist on this PC. Ask Thomas where the project lives.`;
-  await db().from("missions").update({ worker: "working" }).eq("id", id);
+  // Claim the coder in one update (only one coder per mission, and only while it's still running).
+  const { data: claimed } = await db().from("missions").update({ worker: "working" }).eq("id", id).eq("worker", "idle").eq("status", "running").select("id");
+  if (!claimed?.length) return "The coder is already working on a step. Check back later.";
+  starting.add(id);
+  try { return await launchCoder(m, id, instructions); } finally { starting.delete(id); }
+}
+
+async function launchCoder(m: Mission, id: string, instructions: string): Promise<string> {
+  // Its own working copy of the project. Coding was approved on that basis, so if a separate copy can't be made,
+  // nothing runs: it never falls back to Thomas's own folder.
+  const { ensureWorktree } = await import("@/lib/loops");
+  const wt = await ensureWorktree(m).catch((e: Error) => ({ dir: "", note: e.message }));
+  if (!wt.dir) {
+    await db().from("missions").update({ worker: "idle" }).eq("id", id);
+    await askThomas(id, `I couldn't make a separate copy of the project to work in (${wt.note}), so I haven't touched your folder. Is ${m.work_dir} a git project with at least one commit?`);
+    return `Not started: ${wt.note}`;
+  }
+  if (wt.note && !m.worktree) await logMission(id, "note", wt.note);
   await logMission(id, "work", `Started: ${instructions}`);
   const branch = `mymanager/${shortId(id)}`;
-  // Its own working copy of the project, so two jobs (or Thomas himself) can work on the same project at once.
-  const { ensureWorktree } = await import("@/lib/loops");
-  const wt = await ensureWorktree(m).catch(() => ({ dir: m.work_dir as string, note: undefined as string | undefined }));
-  if (wt.note && !m.worktree) await logMission(id, "note", wt.note);
   const dir = wt.dir;
   const { data: pr } = m.project_id ? await db().from("projects").select("id,name,local_path,brief,rules,lessons,goal").eq("id", m.project_id).maybeSingle() : { data: null };
   const { notesText } = await import("@/lib/project-notes");
@@ -223,7 +274,8 @@ The job: ${m.goal}
 This step: ${instructions}
 
 Rules:
-- Work on the git branch "${branch}" (create it from the current branch if it doesn't exist). Commit when the step works, with a clear message. Never push, never deploy, never merge into main.
+- You are in a separate copy of the project, already on the git branch "${branch}". Stay on it. Commit when the step works, with a clear message. Never push, never deploy, never merge into main.
+- Only change files in this folder. Don't write inline scripts (node -e, python -c); put code in a file here and run that.
 - Don't touch secrets, .env files, API keys or anything with real money (trading stays on pretend money).${pr?.rules ? `\n- Thomas's rules for this project, always follow them: ${pr.rules}` : ""}
 - Keep the change small and focused on this step. Run the tests if there are any.${notes ? `\n\nWhat MyManager knows about this project:\n${notes}` : ""}
 - If you need a decision or something only Thomas can give, stop and ask it.
@@ -233,17 +285,22 @@ End your reply with exactly one line, either "RESULT: done - <one line on what c
   const guard = guarded(dir, `code-${shortId(id)}`); // the app blocks anything destructive, whatever the model does
   const args = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", CODER_TOOLS.join(","), "--disallowedTools", CODER_DENY.join(","), ...guard.args];
   const argv = isWin ? args.map((a) => (/[\s&()^|<>]/.test(a) ? `"${a}"` : a)) : args;
-  const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: dir, shell: isWin, env: guard.env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: dir, shell: isWin, env: guard.env, stdio: ["pipe", "pipe", "pipe"], detached: !isWin });
+  coders.set(id, child);
   let out = "", err = "";
   child.stdout.on("data", (d) => { out += d.toString(); });
   child.stderr.on("data", (d) => { err += d.toString(); });
   child.stdin.write(prompt);
   child.stdin.end();
-  const timer = setTimeout(() => child.kill(), 45 * 60_000);
+  const timer = setTimeout(() => { stopCoder(id); }, 45 * 60_000);
   const finish = async (text: string, stuck?: string) => {
     clearTimeout(timer);
+    if (coders.get(id) === child) coders.delete(id);
     await db().from("missions").update({ worker: "idle", next_check_at: new Date().toISOString() }).eq("id", id);
     await logMission(id, "work", text);
+    // Stopped (or finished) while it worked: record what happened, but start nothing more.
+    const { data: now } = await db().from("missions").select("status").eq("id", id).maybeSingle();
+    if (!now || now.status !== "running") return;
     if (m.done_check) {
       // A loop: the check decides what happens next, not a model. If the coder is stuck, ask Thomas.
       if (stuck) { await askThomas(id, stuck); return; }
@@ -252,12 +309,12 @@ End your reply with exactly one line, either "RESULT: done - <one line on what c
     } else void checkMission(id).catch(() => {});
   };
   child.on("error", (e) => { void finish(`The coder couldn't start: ${e.message}`); });
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     let result = "";
     try { result = String(JSON.parse(out).result ?? ""); } catch { result = out.slice(-1500); }
     const line = result.match(/RESULT:\s*(done|stuck)\s*[-–:]\s*(.+)/i);
     const stuck = line && line[1].toLowerCase() === "stuck" ? line[2].trim() : undefined;
-    void finish(line ? `${stuck ? "Stuck" : "Done"}: ${line[2].trim()}` : code === 0 ? result.slice(-800) || "Finished the step." : `The coder stopped (${code}). ${err.slice(-400)}`, stuck);
+    void finish(signal || (code !== 0 && !line) ? `The coder stopped (${signal ?? code}) before finishing. ${err.slice(-400)}` : line ? `${stuck ? "Stuck" : "Done"}: ${line[2].trim()}` : result.slice(-800) || "Finished the step.", stuck);
   });
   return `Started the coder on: ${instructions}. It works on the branch ${branch} and reports back when finished; the mission is checked again then.`;
 }

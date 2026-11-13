@@ -5,41 +5,38 @@ import { revalidatePath } from "next/cache";
 import { db, unwrap } from "@/lib/db";
 import { kindOf } from "@/lib/action-registry";
 import { trustLevel } from "@/lib/trust";
-import { getSettings, monthSpendCents } from "@/lib/queries";
 import type { Action } from "@/lib/types";
 
 const refresh = () => { try { revalidatePath("/", "layout"); } catch { /* not in a request */ } };
-
-/** Why a paid action can't run under the spend caps right now, or null if it can. */
-async function capProblem(cost: number, countPending: boolean): Promise<string | null> {
-  if (cost <= 0) return null;
-  const s = await getSettings();
-  if (cost > s.per_purchase_cap_cents) return "over per-purchase cap";
-  if ((await monthSpendCents({ includePending: countPending })) + cost > s.monthly_cap_cents) return "over monthly cap";
-  return null;
-}
 
 export async function queueAction(input: {
   kind: string; title: string; reason?: string; payload?: Record<string, unknown>;
   cost_cents?: number; project_id?: string | null; requested_by?: string;
 }): Promise<Action> {
   const k = kindOf(input.kind);
-  const cost = Math.max(0, Math.round(input.cost_cents ?? 0));
-  let risk: Action["risk"] = cost > 0 ? "approval" : k.risk;
-  // Counts spend already waiting for an OK too, so many small requests can't add up past the cap.
-  const blockedWhy = await capProblem(cost, true);
-  if (blockedWhy) risk = "blocked";
+  const raw = Number(input.cost_cents ?? 0);
+  if (!Number.isFinite(raw) || raw < 0 || raw > 100_000_000) throw new Error("The cost has to be a normal amount of money.");
+  const cost = Math.round(raw);
+  if (cost > 0) {
+    // Paid: the database checks the caps and reserves the money in one locked step, so requests that arrive
+    // at the same moment can't each see room for themselves (supabase/migrations/0020_review_fixes.sql).
+    const [a] = unwrap(await db().rpc("mm_queue_paid_action", {
+      p_kind: k.kind, p_title: input.title, p_reason: input.reason ?? null, p_payload: input.payload ?? {},
+      p_cost: cost, p_project: input.project_id ?? null, p_requested_by: input.requested_by ?? "user",
+    })) as Action[];
+    refresh();
+    return a;
+  }
+  let risk: Action["risk"] = k.risk;
   // Trust ladder: a trustable, free action type Thomas has approved N times in a row runs on its own.
   let trusted = false;
-  if (!blockedWhy && risk === "approval" && cost === 0 && (await trustLevel(k.kind)).trusted) { risk = "auto"; trusted = true; }
+  if (risk === "approval" && (await trustLevel(k.kind)).trusted) { risk = "auto"; trusted = true; }
 
   const [a] = unwrap(await db().from("actions").insert({
     kind: k.kind, title: input.title, reason: input.reason ?? null, payload: input.payload ?? {},
-    cost_cents: cost, risk, project_id: input.project_id ?? null,
+    cost_cents: 0, risk, project_id: input.project_id ?? null,
     requested_by: input.requested_by ?? "user",
-    status: blockedWhy ? "rejected" : "pending",
-    result: blockedWhy ? { blocked: blockedWhy } : null,
-    decided_at: blockedWhy ? new Date().toISOString() : null,
+    status: "pending",
     ...(trusted ? { reason: `${input.reason ? input.reason + " · " : ""}auto-approved by trust ladder` } : {}),
   }).select());
   if (risk === "auto") return await execute(a);
@@ -85,14 +82,14 @@ async function execute(a: Action): Promise<Action> {
 }
 
 export async function decideAction(id: string, approve: boolean) {
-  const now = new Date().toISOString();
-  // Claim the action in one update, so a double tap (or the phone and the web at once) can't run it twice.
-  const { data: claimed } = await db().from("actions").update({ decided_at: now })
-    .eq("id", id).eq("status", "pending").is("decided_at", null).select();
+  // Claim it in one locked database step, so a double tap (or the phone and the web at once) can't run it twice,
+  // and a paid one is checked against the caps again right as it's approved.
+  const { data: claimed, error } = await db().rpc("mm_claim_action", { p_id: id, p_approve: approve });
+  if (error) throw new Error(`Couldn't record that decision: ${error.message}`);
   const a = (claimed as Action[] | null)?.[0];
   if (!a) return;
-  if (!approve) {
-    await db().from("actions").update({ status: "rejected" }).eq("id", id);
+  if (a.status === "rejected") {
+    if ((a.result as { blocked?: string } | null)?.blocked) { refresh(); return; } // over a cap now: nothing runs
     await syncCampaign(a, "rejected");
     if (a.kind === "runbook.step" || a.kind === "runbook.run") {
       const rb = await import("@/lib/runbooks");
@@ -104,14 +101,7 @@ export async function decideAction(id: string, approve: boolean) {
     void helpersHear(`Turned down: ${a.title}`, a.project_id);
     return;
   }
-  // Check the spend caps again right before paying: other spending may have happened since it was asked.
-  const over = await capProblem(a.cost_cents, false);
-  if (over) {
-    await db().from("actions").update({ status: "rejected", result: { blocked: over } }).eq("id", id);
-    refresh();
-    return;
-  }
-  await execute({ ...a, decided_at: now });
+  await execute(a);
   void helpersHear(`Approved: ${a.title}`, a.project_id);
 }
 
