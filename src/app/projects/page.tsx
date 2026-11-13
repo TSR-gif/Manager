@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { ArrowRight, Plus } from "lucide-react";
-import { pauseProjects } from "@/app/actions";
+import { ArrowRight, FolderSearch, Plus } from "lucide-react";
+import { findProjectFolders, pauseProjects } from "@/app/actions";
 import { getProjects, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
 import { rankProjects } from "@/lib/focus";
@@ -17,7 +17,8 @@ const SECTIONS = [
   { status: "archived", title: "Archived", hint: "Out of the way" },
 ] as const;
 
-export default async function Projects() {
+export default async function Projects({ searchParams }: { searchParams: Promise<{ found?: string; scanned?: string }> }) {
+  const { found, scanned } = await searchParams;
   const [projects, tasks, settings] = await Promise.all([getProjects(), getTasks({ includeDone: true }), getSettings()]);
   const signals = await getSignals(projects.filter((p) => p.status === "active" || p.status === "paused"));
   const ranked = rankProjects(projects, tasks.filter((t) => t.status !== "done"), signals);
@@ -33,8 +34,16 @@ export default async function Projects() {
           <h1 className="display text-[26px] md:text-[30px]">Projects</h1>
           <p className="mt-1 text-[14px] text-muted">Ranked by what needs you most. {projects.length} total.</p>
         </div>
-        <Link href="/projects/new" className="btn"><Plus size={16} /> New project</Link>
+        <div className="flex gap-2">
+          <form action={findProjectFolders}><button className="btn" title="Looks in Documents, Desktop and your user folder for your project folders"><FolderSearch size={16} /> Find folders on this PC</button></form>
+          <Link href="/projects/new" className="btn"><Plus size={16} /> New project</Link>
+        </div>
       </header>
+      {found != null && (
+        <div className="card !py-3 text-[13.5px] text-muted">
+          {Number(found) > 0 ? <>Linked <b className="text-text">{found}</b> project{found === "1" ? "" : "s"} to {found === "1" ? "its folder" : "their folders"} on this PC.</> : <>No new project folders found ({scanned} git folders looked at). You can set a folder on each project&apos;s page.</>}
+        </div>
+      )}
 
       {over && (
         <form action={pauseProjects} className="card flex flex-col gap-3 card-alert sm:flex-row sm:items-center">

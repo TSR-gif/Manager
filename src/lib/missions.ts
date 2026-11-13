@@ -64,7 +64,8 @@ What to do now:
 2. Tick off steps that are really done (complete_task with the task id). Add a missing step with add_mission_step only if it's genuinely needed to finish.
 3. If something needs Thomas (a decision, a login, a key, money, anything only he can do or know), call ask_thomas with one short, clear question. Ask only when you truly can't move without him.
 4. If you can do coding steps and the coder is free, start the next one with run_coding_step: one clear, small step at a time.
-5. Always finish by calling mission_update with one plain line on where it's at (no jargon). Use status "done" only when every step is really finished.
+5. When every step is done and the work is committed on its branch, call request_push once so Thomas can review it and push it to GitHub (skip this if a push is already waiting or done).
+6. Always finish by calling mission_update with one plain line on where it's at (no jargon). Use status "done" only when every step is really finished.
 Never spend money, sign up, post, push code or deploy. Anything like that goes through request_approval.`;
 }
 

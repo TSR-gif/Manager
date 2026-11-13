@@ -203,6 +203,12 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "request_push",
+    description: "When a supervised mission's coding is finished and checked, ask Thomas whether to push its work branch to GitHub (he reviews and merges it there). Shows him what changed. Never merges or deploys.",
+    input_schema: { type: "object", properties: { mission_id: str }, required: ["mission_id"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "answer_mission",
     description: "Pass Thomas's answer to a supervised mission that is waiting on him (when he answers in chat). Use the mission id from get_overview's missions list. The mission carries on straight away.",
     input_schema: { type: "object", properties: { mission_id: str, answer: str }, required: ["mission_id", "answer"], additionalProperties: false },
@@ -437,6 +443,21 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const { startCodingStep } = await import("@/lib/missions");
         const r = await startCodingStep(input.mission_id as string, String(input.instructions));
         return { label: r.startsWith("Started") ? "Started a coding step" : "Couldn't start coding", result: r, isError: !r.startsWith("Started") };
+      }
+      case "request_push": {
+        const { data: m } = await db().from("missions").select("id,project_id,goal,work_dir").eq("id", input.mission_id).maybeSingle();
+        if (!m?.work_dir) return { label: "Nothing to push", result: "This mission has no folder on the PC.", isError: true };
+        const { shortId } = await import("@/lib/missions");
+        const { branchSummary } = await import("@/lib/local-repos");
+        const branch = `mymanager/${shortId(m.id)}`;
+        const sum = await branchSummary(m.work_dir, branch);
+        if (!sum.log) return { label: "Nothing to push", result: `The branch ${branch} has no new commits.`, isError: true };
+        const a = await queueAction({
+          kind: "code.push", title: `Push ${branch} to GitHub`, requested_by: "agent", project_id: m.project_id, cost_cents: 0,
+          reason: `${m.goal}. ${sum.stat || ""}`.trim(),
+          payload: { mission_id: m.id, dir: m.work_dir, branch, changes: sum.log.slice(0, 1500) },
+        });
+        return { label: "Asked you to push the work", result: `Waiting in Approvals (${a.status}). Once pushed, Thomas reviews and merges it on GitHub himself.` };
       }
       case "answer_mission": {
         const { answerMission } = await import("@/lib/missions");

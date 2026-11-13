@@ -667,3 +667,18 @@ export async function setMissionStatus(form: FormData) {
   else if (status === "running") await db().from("missions").update({ status: "running", question: null, finished_at: null, next_check_at: new Date().toISOString() }).eq("id", id);
   refresh();
 }
+
+// ---------- project folders on this PC ----------
+export async function findProjectFolders() {
+  const { linkProjectFolders } = await import("@/lib/local-repos");
+  const r = await linkProjectFolders();
+  refresh();
+  redirect(`/projects?found=${r.linked.length}&scanned=${r.scanned}`);
+}
+
+export async function setProjectFolder(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  await db().from("projects").update({ local_path: str(form, "local_path") }).eq("id", id);
+  refresh();
+}

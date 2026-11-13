@@ -77,6 +77,13 @@ export async function inspectProject(p: Project): Promise<string> {
   if (done.length) out.push(`Recently done: ${done.slice(0, 5).map((t) => `"${t.title}" ${day(t.done_at)}`).join("; ")}`);
   out.push(`Last touched in Manager: ${ago(p.last_touched_at)}.`);
 
+  const localPath = (p as { local_path?: string | null }).local_path;
+  if (localPath) {
+    const { localState, localStateText } = await import("@/lib/local-repos");
+    const ls = await localState(localPath);
+    out.push(ls ? `\n${localStateText(ls)}` : `\n## On this PC\nFolder ${localPath} isn't a git folder any more (moved or deleted?).`);
+  }
+
   if (p.github_repo) {
     const repo = p.github_repo;
     const meta = await gh<{ default_branch: string; pushed_at: string; description: string | null; private: boolean }>(`repos/${repo}`);

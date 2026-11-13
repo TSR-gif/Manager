@@ -60,10 +60,13 @@ async function run(kind: "brief" | "checkin", goal: string) {
   return { runId, kind, quiet };
 }
 
+let lastFolderScan = 0;
 export async function tick(force?: "brief" | "checkin") {
   // recurring per-project jobs run on their own schedule, alongside the catch-up and check-ins
   if (!force) void import("@/lib/jobs").then((m) => m.runDueJobs()).catch(() => {});
   if (!force) void import("@/lib/missions").then((m) => m.runDueMissions()).catch(() => {});
+  // find project folders on this PC now and then (cheap: two levels under the usual places)
+  if (!force && Date.now() - lastFolderScan > 6 * 3600_000) { lastFolderScan = Date.now(); void import("@/lib/local-repos").then((m) => m.linkProjectFolders()).catch(() => {}); }
   if (running) return { skipped: "busy" };
   const { data: s } = await db().from("settings").select("*").eq("id", 1).single();
   if (!s) return { skipped: "no settings" };

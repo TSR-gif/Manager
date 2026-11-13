@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History, Megaphone, Radar } from "lucide-react";
-import { addTask, requestAction, saveProject, toggleWatch } from "@/app/actions";
+import { addTask, requestAction, saveProject, setProjectFolder, toggleWatch } from "@/app/actions";
 import { Orb } from "@/components/orb";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
@@ -12,6 +12,8 @@ import { doneByDay, projectHealth } from "@/lib/health";
 import { DoneBars, HealthChip } from "@/components/health";
 import { db } from "@/lib/db";
 import { monthlyCents } from "@/lib/money";
+import { localState } from "@/lib/local-repos";
+import { FolderGit2 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +61,8 @@ export default async function ProjectPage({
     ...(p.kind === "client" ? [["Hours logged", `${Math.floor(loggedMin / 60)}h${loggedMin % 60 ? ` ${loggedMin % 60}m` : ""}`] as [string, string]] : []),
     ...(subCost ? [["Costs a month", `$${(subCost / 100).toFixed(0)}`] as [string, string]] : []),
   ];
+  const localPath = (p as { local_path?: string | null }).local_path ?? null;
+  const local = !isNew && localPath ? await localState(localPath) : null;
   const shownStats = statsAll.filter(([k, v]) => k === "Open tasks" || !/^0(h 0m)?$/.test(v));
 
   return (
@@ -98,6 +102,29 @@ export default async function ProjectPage({
 
       {p.goal && !isNew && (
         <div className="hero !p-4 text-[15px]"><span className="label mr-2">Goal</span>{p.goal}</div>
+      )}
+
+      {!isNew && (
+        <section className="card">
+          <div className="kicker mb-3 flex items-center gap-2"><FolderGit2 size={13} />On this PC</div>
+          {local ? (
+            <div className="grid gap-x-6 gap-y-2 text-[13.5px] sm:grid-cols-2">
+              <div><span className="text-faint">Branch </span><span className="font-mono text-[13px]">{local.branch}</span>{local.ahead ? <span className="text-warn"> · {local.ahead} not pushed</span> : null}{local.behind ? <span className="text-warn"> · {local.behind} behind GitHub</span> : null}</div>
+              <div><span className="text-faint">Unsaved changes </span>{local.changed ? <span className="text-warn">{local.changed} file{local.changed > 1 ? "s" : ""}</span> : "none"}</div>
+              <div className="truncate sm:col-span-2"><span className="text-faint">Last commit </span>{local.lastCommit || "none"}</div>
+              {local.workBranches.length > 0 && (
+                <div className="sm:col-span-2"><span className="text-faint">MyManager&apos;s work </span>{local.workBranches.map((b) => <span key={b.name} className="chip chip-accent2 mr-1.5 font-mono">{b.name} · {b.commits} commit{b.commits === 1 ? "" : "s"}</span>)}</div>
+              )}
+            </div>
+          ) : (
+            <p className="text-[13.5px] text-muted">{localPath ? "That folder isn't a git folder (moved or deleted?)." : "Not linked to a folder yet. Set it so MyManager can see your local changes and do coding steps for you."}</p>
+          )}
+          <form action={setProjectFolder} className="mt-3 flex gap-2">
+            <input type="hidden" name="id" value={p.id} />
+            <input name="local_path" defaultValue={localPath ?? ""} placeholder="e.g. C:\Users\you\Documents\DayTrader" className="font-mono !text-[13px]" />
+            <button className="btn shrink-0">Save</button>
+          </form>
+        </section>
       )}
 
       {!isNew && health && health.level !== "idle" && (

@@ -74,6 +74,15 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
       return { note: "Coding allowed for this mission" };
     },
   },
+  // Pushing a MyManager work branch to GitHub so Thomas can review/merge it there. Never trustable.
+  "code.push": {
+    kind: "code.push", label: "Push code to GitHub", risk: "approval",
+    execute: async (a) => {
+      const { dir, branch } = a.payload as { dir: string; branch: string };
+      const { pushBranch } = await import("@/lib/local-repos");
+      return pushBranch(dir, branch);
+    },
+  },
   // Ads are money: launching or raising a budget always asks and counts against the spend limits.
   "ads.launch": { kind: "ads.launch", label: "Launch an ad", risk: "approval" },
   "ads.budget": { kind: "ads.budget", label: "Change an ad budget", risk: "approval" },
@@ -82,7 +91,7 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
 };
 
 /** Hard rule: these always ask, whatever the trust ladder or autonomy setting says. */
-export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget", "mission.code"];
+export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget", "mission.code", "code.push"];
 
 export function kindOf(kind: string): ActionKind {
   return ACTION_KINDS[kind] ?? ACTION_KINDS.other;
