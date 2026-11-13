@@ -16,6 +16,11 @@ See `docs/WORKLOG.md` for the full build log, decisions and what's pending.
 - The assistant uses the **Claude Code app already signed in on this PC** (`AGENT_BACKEND=claude-code`). To use the Claude API instead, set `AGENT_BACKEND=api` and `ANTHROPIC_API_KEY=` in `.env.local`.
 - The assistant gets Manager's own tools over a local MCP bridge (`scripts/mcp-manager.mjs`) plus web search. It can't run shell commands or edit files.
 
+### Optional extras (all in `.env.local`, restart after changing)
+- `TELEGRAM_BOT_TOKEN`: phone approvals with Approve/Deny buttons, plus texting the assistant. Make a bot with @BotFather, then pair it from the Approvals screen.
+- `UP_TOKEN`: Up Bank balance and spending on Today (Up app → Data sharing → Personal Access Token). Read-only.
+- PC control: ask the assistant to do something on your PC; it queues a "Use your PC" approval. Once approved, for 2 hours it can drive desktop apps (agent-desktop) and websites (Playwright). It never types passwords or card numbers.
+
 ## Run against Supabase
 1. `cp .env.example .env.local` and fill it in.
 2. Apply `supabase/migrations/*.sql` then `supabase/seed.sql` to the Supabase project.
