@@ -80,15 +80,15 @@ export default async function ProjectPage({
         </div>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[1.25fr_1fr]">
+      <div className="grid gap-5 lg:grid-cols-[1.25fr_1fr] [&>*]:min-w-0">
         <div className="space-y-5">
           {!isNew && (
             <section className="card">
               <div className="mb-3 flex items-center gap-2"><ListTodo size={16} className="text-accent" /><span className="font-semibold">Tasks</span><span className="text-[13px] text-faint">{open.length} open</span></div>
-              <form action={addTask} className="mb-2 flex gap-2">
+              <form action={addTask} className="mb-2 flex flex-wrap gap-2">
                 <input type="hidden" name="project_id" value={p.id} />
-                <input name="title" placeholder="Add a task…" autoComplete="off" required />
-                <input name="due" type="date" className="!w-40 shrink-0" />
+                <input name="title" placeholder="Add a task…" autoComplete="off" required className="!w-auto min-w-0 flex-[1_1_12rem]" />
+                <input name="due" type="date" className="!w-36 min-w-0 flex-1 sm:flex-none" />
                 <button className="btn">Add</button>
               </form>
               {open.length === 0 && <Empty icon={<Sparkles size={18} />} title="No open tasks" hint="Break the next action into 2–3 small steps." />}

@@ -59,6 +59,39 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "remember",
+    description: "Save a lasting fact about Thomas (a preference, routine, person, work or money detail) so you know it next time. Only for things he told you or clearly confirmed. Never passwords, card numbers or secrets.",
+    input_schema: {
+      type: "object",
+      properties: { fact: str, category: { type: "string", enum: ["general", "preference", "person", "routine", "work", "money"] } },
+      required: ["fact", "category"], additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "log_time",
+    description: "Log hours Thomas worked on a client job (e.g. Altona Sports Centre). Date as YYYY-MM-DD or null for today.",
+    input_schema: {
+      type: "object",
+      properties: { project_name: str, hours: { type: "number" }, date: nstr, note: nstr },
+      required: ["project_name", "hours", "date", "note"], additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "track_subscription",
+    description: "Record something Thomas pays for regularly (hosting, domain, app, tool) so Money shows what everything costs. Amount in AUD. Doesn't buy anything.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: str, amount_dollars: { type: "number" }, cycle: { type: "string", enum: ["monthly", "yearly", "weekly"] },
+        project_name: nstr, next_renewal: nstr,
+      },
+      required: ["name", "amount_dollars", "cycle", "project_name", "next_renewal"], additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: "add_idea",
     description: "Save an idea to the ideas inbox for Thomas to triage later.",
     input_schema: { type: "object", properties: { text: str }, required: ["text"], additionalProperties: false },
@@ -148,6 +181,28 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         patch.last_touched_at = new Date().toISOString();
         await db().from("projects").update(patch).eq("id", p.id);
         return { label: `Updated ${p.name}`, result: `Updated ${Object.keys(patch).filter((k) => k !== "last_touched_at").join(", ") || "nothing"}` };
+      }
+      case "remember": {
+        const fact = String(input.fact ?? "").slice(0, 500);
+        if (/\b\d{13,19}\b|password|passcode|cvv/i.test(fact)) return { label: "Didn't save that", result: "Refused: looks like a secret. Never store passwords or card numbers.", isError: true };
+        await db().from("memories").insert({ fact, category: input.category ?? "general", source: "assistant" });
+        return { label: `Remembered: ${fact.slice(0, 60)}`, result: "Saved. Thomas can see it on the About you page." };
+      }
+      case "log_time": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        const minutes = Math.round(Number(input.hours) * 60);
+        if (!(minutes > 0)) return { label: "No hours given", result: "Hours must be more than 0.", isError: true };
+        await db().from("time_entries").insert({ project_id: p.id, minutes, note: input.note ?? null, ...(input.date ? { worked_on: input.date } : {}) });
+        return { label: `Logged ${Number(input.hours)}h on ${p.name}`, result: "Logged. It shows on the Money page and goes on the next invoice." };
+      }
+      case "track_subscription": {
+        const p = input.project_name ? await findProject(input.project_name as string) : null;
+        await db().from("subscriptions").insert({
+          name: input.name, amount_cents: Math.round(Number(input.amount_dollars) * 100), cycle: input.cycle,
+          project_id: p?.id ?? null, next_renewal: input.next_renewal ?? null,
+        });
+        return { label: `Tracking ${input.name}`, result: "Added to Money → Subscriptions." };
       }
       case "add_idea": {
         await db().from("ideas").insert({ text: input.text });

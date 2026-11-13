@@ -1,15 +1,17 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarCheck, FolderKanban, Lightbulb, ShieldCheck, RefreshCcw, Command, Sparkles } from "lucide-react";
+import { CalendarCheck, FolderKanban, Lightbulb, ShieldCheck, RefreshCcw, Command, Sparkles, Wallet, UserRound } from "lucide-react";
 
 const items = [
   { href: "/", label: "Today", icon: CalendarCheck },
   { href: "/agent", label: "Assistant", icon: Sparkles },
   { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/inbox", label: "Ideas", icon: Lightbulb },
+  { href: "/money", label: "Money", icon: Wallet },
+  { href: "/inbox", label: "Ideas", icon: Lightbulb, desktopOnly: true },
   { href: "/approvals", label: "Approvals", icon: ShieldCheck },
   { href: "/review", label: "Review", icon: RefreshCcw, desktopOnly: true },
+  { href: "/me", label: "About you", icon: UserRound, desktopOnly: true },
 ];
 
 export function Nav({ pending = 0 }: { pending?: number }) {

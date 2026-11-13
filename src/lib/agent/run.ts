@@ -38,7 +38,11 @@ export async function systemPrompt() {
   const name = (data?.assistant_name as string) || "Manager";
   const level = (data?.autonomy as string) ?? "balanced";
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Melbourne" });
-  return `${BASE_SYSTEM.replace("You are Manager,", `You are ${name},`)}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}`;
+  const { data: mem } = await db().from("memories").select("fact,category").order("created_at").limit(200);
+  const known = (mem ?? []).length
+    ? `\n\nWhat you know about Thomas (he can see and edit this list; use the remember tool when he tells you something lasting):\n${(mem ?? []).map((m: { fact: string; category: string }) => `- [${m.category}] ${m.fact}`).join("\n")}`
+    : "";
+  return `${BASE_SYSTEM.replace("You are Manager,", `You are ${name},`)}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}${known}`;
 }
 
 /** claude-code = the Claude Code app on this PC (local mode); api = Claude API (needs ANTHROPIC_API_KEY; always on Vercel). */

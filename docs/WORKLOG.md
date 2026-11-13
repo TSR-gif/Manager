@@ -111,3 +111,11 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - **Specialists**: "+ Add a specialist" on any project page; watched projects are checked in every check-in.
 - Tested: automatic brief fired on its own ~1 min after start and was delivered to (mock) Telegram; forced check-in correctly stayed quiet right after the brief; job abandoned after 4 s finished in the background (idea added) and sent the Done message.
 - Fixed: Telegram rejects link buttons to localhost, so links only appear when APP_URL is a public https address.
+
+**09:55–10:20 — Money, About you, screenshots**
+- **Money page** (`/money`, migration 0007): client jobs (log hours, hourly rate and client name, create an invoice from unbilled hours or a fixed amount, mark sent → due in 14 days → paid, void returns hours), totals for owed / overdue / not invoiced; **subscriptions tracker** (monthly/yearly/weekly, per-project monthly cost, renewing-this-week warning, mark cancelled). Up balance tile when connected.
+- **About you page** (`/me`, `memories` table): every fact the assistant knows, grouped, add/delete. All facts go into the assistant's prompt. Seeded with 7 facts learned so far.
+- New assistant tools: `remember` (refuses anything that looks like a password or card number), `log_time`, `track_subscription`.
+- Nav: Money added (phone bar: Today, Assistant, Projects, Money, Approvals; Ideas and About you on desktop sidebar).
+- Fixed: project page overflowed sideways on phones (add-task row); dev badge hidden.
+- Screenshots of every screen, desktop + phone, in project files `manager/screenshots/` (sample hours/subscriptions in the dev copy only).

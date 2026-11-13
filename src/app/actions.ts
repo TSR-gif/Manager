@@ -289,3 +289,95 @@ export async function completeReview() {
   refresh();
   redirect("/");
 }
+
+// ---------- client jobs ----------
+const cents = (v: string | null | undefined) => Math.round(Number((v ?? "0").replace(/[$,\s]/g, "")) * 100) || 0;
+
+export async function saveClientSettings(form: FormData) {
+  const id = str(form, "project_id");
+  if (!id) return;
+  await db().from("projects").update({ client_name: str(form, "client_name"), hourly_rate_cents: cents(str(form, "rate")) || null }).eq("id", id);
+  refresh();
+}
+
+export async function logTime(form: FormData) {
+  const project_id = str(form, "project_id");
+  const h = Number(str(form, "hours") ?? 0);
+  const minutes = Math.round(h * 60);
+  if (!project_id || !(minutes > 0)) return;
+  await db().from("time_entries").insert({ project_id, minutes, note: str(form, "note"), worked_on: str(form, "worked_on") ?? undefined });
+  await touch(project_id);
+  refresh();
+}
+
+export async function deleteTimeEntry(form: FormData) {
+  const id = str(form, "id");
+  if (id) await db().from("time_entries").delete().eq("id", id).is("invoice_id", null);
+  refresh();
+}
+
+/** Turns all unbilled hours into a draft invoice (hours × rate, or a fixed amount if given). */
+export async function createInvoice(form: FormData) {
+  const project_id = str(form, "project_id");
+  if (!project_id) return;
+  const { data: p } = await db().from("projects").select("hourly_rate_cents").eq("id", project_id).single();
+  const { data: open } = await db().from("time_entries").select("id,minutes").eq("project_id", project_id).is("invoice_id", null);
+  const fixed = cents(str(form, "amount"));
+  const fromHours = Math.round(((open ?? []).reduce((s, e) => s + e.minutes, 0) / 60) * (p?.hourly_rate_cents ?? 0));
+  const amount = fixed || fromHours;
+  if (!amount) return;
+  const { count } = await db().from("invoices").select("id", { count: "exact", head: true });
+  const [inv] = unwrap(await db().from("invoices").insert({
+    project_id, amount_cents: amount, number: `INV-${String((count ?? 0) + 1).padStart(3, "0")}`, note: str(form, "note"),
+  }).select());
+  if (!fixed && open?.length) await db().from("time_entries").update({ invoice_id: inv.id }).in("id", open.map((e) => e.id));
+  refresh();
+}
+
+export async function setInvoiceStatus(form: FormData) {
+  const id = str(form, "id");
+  const status = str(form, "status");
+  if (!id || !status || !["draft", "sent", "paid", "void"].includes(status)) return;
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne" }).format(new Date());
+  const due = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne" }).format(new Date(Date.now() + 14 * 86_400_000));
+  const patch: Record<string, unknown> = { status };
+  if (status === "sent") Object.assign(patch, { issued_on: today, due_on: due });
+  if (status === "paid") patch.paid_on = today;
+  if (status === "void") await db().from("time_entries").update({ invoice_id: null }).eq("invoice_id", id);
+  await db().from("invoices").update(patch).eq("id", id);
+  refresh();
+}
+
+// ---------- subscriptions ----------
+export async function saveSubscription(form: FormData) {
+  const name = str(form, "name");
+  if (!name) return;
+  const cycle = str(form, "cycle") ?? "monthly";
+  await db().from("subscriptions").insert({
+    name, amount_cents: cents(str(form, "amount")), cycle: ["monthly", "yearly", "weekly"].includes(cycle) ? cycle : "monthly",
+    project_id: str(form, "project_id"), next_renewal: str(form, "next_renewal"), url: str(form, "url"),
+    status: str(form, "status") === "trial" ? "trial" : "active",
+  });
+  refresh();
+}
+
+export async function setSubscriptionStatus(form: FormData) {
+  const id = str(form, "id");
+  const status = str(form, "status");
+  if (id && status && ["active", "cancelled", "trial"].includes(status)) await db().from("subscriptions").update({ status }).eq("id", id);
+  refresh();
+}
+
+// ---------- what Manager knows ----------
+export async function addMemory(form: FormData) {
+  const fact = str(form, "fact");
+  const category = str(form, "category") ?? "general";
+  if (fact) await db().from("memories").insert({ fact: fact.slice(0, 500), category, source: "user" });
+  refresh();
+}
+
+export async function deleteMemory(form: FormData) {
+  const id = str(form, "id");
+  if (id) await db().from("memories").delete().eq("id", id);
+  refresh();
+}
