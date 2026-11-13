@@ -63,3 +63,13 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - `/api/agent` streams NDJSON events; UI shows a live timeline (thinking, web searches, tool calls, approvals with a review link, final summary card). Recent runs listed on the right.
 - Nav: Agent added (desktop + phone). Review stays on desktop sidebar and the Today card.
 - Not yet tested against the real API (no key in the dev box); UI tested with a sample run.
+
+**05:50 — Learned his projects from the repos** (read-only shallow clones)
+- Rewards App = **Bargie** (bargie.app): weekly points + grocery savings; very active (540+ PRs).
+- TSRail Website = **TS Rail Operations Portal** (tsrail.com.au), his business ops portal on Supabase.
+- PunterIQ = betting analytics/tracking for AU punters; odds cache paused 28 Oct; AFL team-list data work next.
+- Day trader = Python backtester + paper trader; findings (12 Nov): buy-and-hold beats every day-trading rule. Pretend money only.
+- Idle Game = **The Long Reign** (repo long-reign), save point 3.
+- America Holiday = USA trip planner, trip was 8–23 Oct 2026 → set to *paused*, next action "export and archive".
+- TradingProgram = empty repo → archived.
+- Seed now carries a goal, next action and notes for every project (`supabase/seed.sql`). Altona Sports Centre, Web Scrapers, NDIS Scanner have no repo: goals are placeholders to fill in.
