@@ -4,8 +4,8 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 
 ## Waiting on Thomas
 - [x] Supabase project "Manager" created by Thomas (ref `ilfdeyizixidblqqrhzu`, in a different Supabase org than the connector can see).
-- [ ] **Run `setup.sql`** in Supabase SQL Editor (tables + seed). Copy in project files `manager/setup.sql`.
-- [ ] **Vercel env vars** on project `manager`: `SUPABASE_SERVICE_ROLE_KEY`, `APP_PASSWORD`. Later: `GITHUB_TOKEN` (fine-grained PAT), `VERCEL_TOKEN`, `ANTHROPIC_API_KEY`.
+- [ ] **Run `setup.sql`** (now includes the agent table) in Supabase SQL Editor (tables + seed). Copy in project files `manager/setup.sql`.
+- [ ] **Vercel env vars** on project `manager`: `SUPABASE_SERVICE_ROLE_KEY`, `APP_PASSWORD`. `ANTHROPIC_API_KEY` (turns the Agent on). Optional: `GITHUB_TOKEN` (fine-grained PAT, issues + PR read/write), `VERCEL_TOKEN` (live deploy status, redeploys).
 - [ ] Supabase org shows "Grace period is over" banner: check Billing → Usage, risk of all projects in that org stopping.
 - [ ] Optional: turn on his browser on the PC so research isn't limited.
 
@@ -55,3 +55,11 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - Tested end to end locally: capture idea via Ctrl+K, queue $20 purchase → pending → approved (spend meter shows $20/$200), $80 purchase auto-blocked by $50 per-purchase cap.
 - Created Vercel project `manager` (prj_RiqbNg45bas28cUSSi1YZZol4DYh) linked to TSR-gif/manager; pushes to main deploy. Set SUPABASE_URL, VERCEL_TEAM_ID, AUTH_SECRET.
 - Supabase MCP `create_project` prompt never reached Thomas's phone (timed out/cancelled 3×) → he created it manually.
+
+**05:30–05:45 — Phase 2: Agent screen (Claude as the brain)**
+- Thomas: "like Claude Cowork but better, the AI is just one feature". So: an Agent tab where he hands over a goal; the rest of the app works without it.
+- `src/lib/agent/run.ts`: manual tool loop on `claude-opus-5-5`, adaptive thinking (summaries shown as "Thinking"), effort medium, prompt-cached system prompt, server-side refusal fallback enabled (`fallbacks: "default"`), Anthropic web search (max 5/turn), 25-turn cap. Every step saved to `agent_runs` so runs can be reopened and followed up.
+- Tools (`src/lib/agent/tools.ts`): get_overview, create_task, complete_task, update_project, add_idea, create_github_issue (runs now), request_approval (signup / purchase / email / redeploy / PC session → Approvals queue, spend caps enforced, never runs on its own).
+- `/api/agent` streams NDJSON events; UI shows a live timeline (thinking, web searches, tool calls, approvals with a review link, final summary card). Recent runs listed on the right.
+- Nav: Agent added (desktop + phone). Review stays on desktop sidebar and the Today card.
+- Not yet tested against the real API (no key in the dev box); UI tested with a sample run.
