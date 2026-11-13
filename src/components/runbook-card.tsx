@@ -10,13 +10,21 @@ const STATUS: Record<Runbook["status"], { t: string; c: string }> = {
 };
 
 function Icon({ s }: { s: Step }) {
-  if (s.status === "done") return <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-good" />;
+  if (s.status === "done") return <CheckCircle2 size={15} className={`mt-0.5 shrink-0 ${s.outcome === "unverified" ? "text-warn" : "text-good"}`} />;
   if (s.status === "failed") return <CircleX size={15} className="mt-0.5 shrink-0 text-bad" />;
   if (s.status === "running") return <Loader2 size={15} className="mt-0.5 shrink-0 animate-spin text-accent" />;
   if (s.status === "waiting") return <Hand size={15} className="mt-0.5 shrink-0 text-warn" />;
   if (s.status === "skipped") return <CircleDashed size={15} className="mt-0.5 shrink-0 text-faint" />;
   return <span className="mt-[3px] h-[13px] w-[13px] shrink-0 rounded-full border border-line2" />;
 }
+
+/** How a step ended, when that matters to him. A plain "finished" says nothing new, so it gets no tag. */
+const OUTCOME: Partial<Record<NonNullable<Step["outcome"]>, { t: string; c: string }>> = {
+  failed: { t: "Had a problem", c: "chip-bad" },
+  interrupted: { t: "Stopped part-way", c: "chip-bad" },
+  not_found: { t: "Not running", c: "chip-warn" },
+  unverified: { t: "Check it worked", c: "chip-warn" },
+};
 
 export function RunbookCard({ r, project, tails }: { r: Runbook; project: string; tails: Record<string, string> }) {
   const st = STATUS[r.status] ?? STATUS.draft;
@@ -42,7 +50,7 @@ export function RunbookCard({ r, project, tails }: { r: Runbook; project: string
           <li key={s.id} className="flex items-start gap-2">
             <Icon s={s} />
             <div className="min-w-0 flex-1">
-              <div className={s.status === "skipped" ? "text-faint line-through" : ""}>{s.label}{s.optional && <span className="text-faint"> (optional)</span>}</div>
+              <div className={s.status === "skipped" ? "text-faint line-through" : ""}>{s.label}{s.optional && <span className="text-faint"> (optional)</span>}{s.outcome && OUTCOME[s.outcome] && <span className={`chip ${OUTCOME[s.outcome]!.c} ml-2 align-middle !text-[11.5px]`}>{OUTCOME[s.outcome]!.t}</span>}</div>
               {s.note && <div className="text-[12.5px] text-muted">{s.note}</div>}
               {(s.kind === "start_job" || s.kind === "watch_process") && s.status === "running" && tails[s.id] && (
                 <pre className="mt-1.5 max-h-28 overflow-auto whitespace-pre-wrap rounded-lg bg-panel3 p-2 font-mono text-[11.5px] text-muted">{tails[s.id]}</pre>

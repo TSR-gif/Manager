@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 interface RunRow { id: string; goal: string; status: string; created_at: string; kind?: string; unread?: boolean; events?: AgentEvent[] }
 
 const KIND_LABEL: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in", mission: "Checked on a supervised job", study: "Studied a project" };
+const runState = (s: string) => (s === "running" ? "working… · " : s === "failed" ? "didn't finish · " : s === "stopped" ? "stopped · " : "");
 const AUTONOMY_LABEL: Record<string, string> = { ask: "Asks you first", balanced: "Does small things itself", decide: "Decides for you" };
 
 export default async function AgentPage({ searchParams }: { searchParams: Promise<{ run?: string; ask?: string; voice?: string }> }) {
@@ -65,6 +66,21 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
             The assistant isn&apos;t switched on in this online copy yet. Use MyManager on your PC for now.
           </div>
         )}
+        {(runs ?? []).length > 0 && (
+          <details className="mb-4 rounded-[10px] border border-line lg:hidden">
+            <summary className="cursor-pointer px-3 py-2.5 text-[14px] font-medium">Earlier chats</summary>
+            <ul className="max-h-[50vh] overflow-auto border-t border-line py-1">
+              {(runs ?? []).map((r: RunRow) => (
+                <li key={r.id}>
+                  <Link href={`/agent?run=${r.id}`} className={`block px-3 py-2 ${r.id === cur?.id ? "bg-panel2" : ""}`}>
+                    <div className={`truncate text-[14px] ${r.unread ? "font-semibold" : ""}`}>{r.kind && KIND_LABEL[r.kind] ? KIND_LABEL[r.kind] : r.goal}</div>
+                    <div className="text-[12px] text-faint">{runState(r.status)}{ago(r.created_at)}</div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         <AgentConsole key={cur?.id ?? "new"} initialEvents={cur?.events ?? []} runId={cur?.id} goal={cur?.goal} running={cur?.status === "running"} ask={cur ? undefined : ask} voice={voice === "1"} name={name} />
       </div>
 
@@ -78,7 +94,7 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
                   {r.unread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
                   <div className={`truncate text-[13.5px] ${r.unread ? "font-semibold" : ""}`}>{r.kind && KIND_LABEL[r.kind] ? KIND_LABEL[r.kind] : r.goal}</div>
                 </div>
-                <div className="text-[11.5px] text-faint">{r.status === "running" ? "working… · " : r.status === "failed" ? "didn&apos;t finish · " : r.status === "stopped" ? "stopped · " : ""}{ago(r.created_at)}</div>
+                <div className="text-[11.5px] text-faint">{runState(r.status)}{ago(r.created_at)}</div>
               </Link>
             </li>
           ))}

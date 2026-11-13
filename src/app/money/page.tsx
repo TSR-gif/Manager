@@ -51,9 +51,13 @@ export default async function MoneyPage() {
         <Tile icon={<Clock size={19} />} label="Not invoiced" value={$(unbilled)} tone="var(--warn)" />
         <Tile icon={<Repeat size={19} />} label="Subscriptions a month" value={$(perMonth)} hint={`${live.length} active`} tone="var(--accent)" />
         {up.configured && !up.error
-          ? <Tile icon={<Wallet size={19} />} label="Bank balance" value={$(up.balanceCents ?? 0)} hint={`${$(up.spent30dCents ?? 0)} spent 30d`} tone="var(--accent-2)" />
+          ? <Tile icon={<Wallet size={19} />} label="Bank balance" value={$(up.balanceCents ?? 0)} hint={`${$(up.spent30dCents ?? 0)}${up.partial ? "+" : ""} spent 30d`} tone="var(--accent-2)" />
           : <Tile icon={<Wallet size={19} />} label={up.configured ? "Bank" : "Connect your bank"} value={up.configured ? "—" : "Set up"} hint={up.configured ? up.error : "Up only, read only"} tone="var(--accent)" href="/settings#bank" />}
       </div>
+
+      {up.configured && !up.error && up.partial && (
+        <div className="card card-alert text-[13.5px]"><b className="font-medium">Bank spending is incomplete.</b> {up.partial} The balance itself is right.</div>
+      )}
 
       {/* the action next to the number */}
       {jobs.some((j) => j.unbilledCents > 0) && (

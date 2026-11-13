@@ -7,6 +7,7 @@ import { AskBar } from "@/components/ask-bar";
 import { Head } from "@/components/nav";
 import { Decisions, DoneForYou, WorkingOn } from "@/components/decisions";
 import { db } from "@/lib/db";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { nextOnCalendar, projectNames, todayData } from "@/lib/today";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export default async function Today() {
   return (
     <>
       <Head title="Today" phoneTitle="MyManager" />
+      {t.work.length > 0 && <AutoRefresh every={15} />}
       <div className="pagewrap fade-in">
         <h1 className="hello">{greeting}, Thomas</h1>
         <div className="stats">

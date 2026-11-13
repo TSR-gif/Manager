@@ -12,6 +12,7 @@ import type { Project } from "@/lib/types";
 import { localState } from "@/lib/local-repos";
 import { helperLook } from "@/lib/helper-look";
 import { projectNames, todayData } from "@/lib/today";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { Head } from "@/components/nav";
 import { AskBar } from "@/components/ask-bar";
 import { Decisions, WorkingOn } from "@/components/decisions";
@@ -295,6 +296,7 @@ export default async function HelperPage({ params, searchParams }: { params: Pro
   return (
     <>
       <Head back={{ href: "/helpers", label: "Helpers" }} />
+      {t.work.length > 0 && <AutoRefresh every={10} />}
       <div className="pagewrap fade-in">
         <div className="hh">
           <div className="tile lg" style={{ background: look.bg }}>{look.emoji}</div>
