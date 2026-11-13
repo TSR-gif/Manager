@@ -91,7 +91,7 @@ export async function runClaudeCode(
   if (ccSession) args.push("--resume", ccSession);
 
   const isWin = process.platform === "win32";
-  const bin = process.env.CLAUDE_BIN ?? "claude";
+  const bin = process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"); // .cmd, not the PowerShell .ps1 that Windows often blocks
   const labels = new Map<string, string>();
 
   return new Promise<string>((resolve) => {

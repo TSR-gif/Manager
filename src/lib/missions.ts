@@ -175,7 +175,7 @@ End your reply with exactly one line, either "RESULT: done - <one line on what c
   const isWin = process.platform === "win32";
   const args = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", CODER_TOOLS.join(","), "--disallowedTools", CODER_DENY.join(",")];
   const argv = isWin ? args.map((a) => (/[\s&()^|<>]/.test(a) ? `"${a}"` : a)) : args;
-  const child = spawn(process.env.CLAUDE_BIN ?? "claude", argv, { cwd: m.work_dir, shell: isWin, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: m.work_dir, shell: isWin, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
   let out = "", err = "";
   child.stdout.on("data", (d) => { out += d.toString(); });
   child.stderr.on("data", (d) => { err += d.toString(); });
