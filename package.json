@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint .",
     "local": "node scripts/local.mjs",
     "test": "node --test tests/security.test.mjs tests/review.test.mjs"
   },
@@ -15,22 +15,26 @@
     "@supabase/supabase-js": "^2.119.0",
     "geist": "^1.9.2",
     "lucide-react": "^1.72.0",
-    "next": "15.5.29",
+    "next": "16.4.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",
-    "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.5.29",
+    "eslint-config-next": "16.4.6",
     "pg": "^8.23.1",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.8"
+    }
   }
 }

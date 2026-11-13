@@ -99,7 +99,7 @@ test("a run's tool pass works only for that run, expires, and isn't the helper k
 });
 
 test("the tool pass is only accepted by the tool route; approvals need the helper key or the login", () => {
-  const mw = fs.readFileSync(path.join(ROOT, "src", "middleware.ts"), "utf8");
+  const mw = fs.readFileSync(path.join(ROOT, "src", "proxy.ts"), "utf8");
   assert.match(mw, /\["\/api\/bot", "\/api\/proactive", "\/api\/agent"\]\.includes\(pathname\) && sameText\(req\.headers\.get\("x-manager-key"\)/);
   const bot = fs.readFileSync(path.join(ROOT, "src", "app", "api", "bot", "route.ts"), "utf8");
   assert.doesNotMatch(bot, /x-manager-tool|checkToolToken/);
