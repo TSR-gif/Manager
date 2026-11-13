@@ -66,6 +66,10 @@ test("guard never lets secret files be read", () => {
   assert.equal(guard("Read", { file_path: path.join(ROOT, ".env.local") }), 2);
   assert.equal(guard("Read", { file_path: "C:/Users/x/DayTrader/alpaca_keys.env" }), 2);
   assert.equal(guard("Bash", { command: "type .env.local" }), 2);
+  assert.equal(guard("Read", { file_path: "C:/Users/x/AppData/Roaming/com.vercel.cli/Data/auth.json" }), 2);
+  assert.equal(guard("Bash", { command: "cat ~/.local/share/com.vercel.cli/config.json" }), 2);
+  assert.equal(guard("Read", { file_path: "C:/Users/x/AppData/Roaming/GitHub CLI/hosts.yml" }), 2);
+  assert.equal(guard("Read", { file_path: "/home/x/.config/gh/hosts.yml" }), 2);
   assert.equal(guard("Read", { file_path: path.join(ROOT, "package.json") }), 0);
 });
 
