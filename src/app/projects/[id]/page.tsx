@@ -8,6 +8,10 @@ import { getSignals } from "@/lib/signals";
 import { Empty, PriorityBadge, ProjectAvatar, SignalChips, StatusDot, ago } from "@/components/ui";
 import { TaskItem } from "@/components/task-item";
 import type { Project } from "@/lib/types";
+import { doneByDay, projectHealth } from "@/lib/health";
+import { DoneBars, HealthChip } from "@/components/health";
+import { db } from "@/lib/db";
+import { monthlyCents } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +39,26 @@ export default async function ProjectPage({
   const signals = isNew ? {} : await getSignals([p]);
   const s = signals[p.id];
   const log = actions.filter((a) => a.project_id === p.id).slice(0, 12);
+  const health = isNew ? null : projectHealth(p, tasks, s);
+  const bars = doneByDay(tasks);
+  const done14 = bars.reduce((n, d) => n + d.count, 0);
+  const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
+  const [focusQ, timeQ, subsQ] = isNew ? [{ data: [] }, { data: [] }, { data: [] }] : await Promise.all([
+    db().from("focus_sessions").select("started_at,ended_at,planned_minutes").eq("project_id", p.id).gte("started_at", since),
+    db().from("time_entries").select("minutes").eq("project_id", p.id),
+    db().from("subscriptions").select("amount_cents,cycle,status").eq("project_id", p.id).neq("status", "cancelled"),
+  ]);
+  const focusMin = ((focusQ.data ?? []) as { started_at: string; ended_at: string | null; planned_minutes: number }[])
+    .reduce((m, f) => m + Math.min(f.planned_minutes * 2, Math.round(((f.ended_at ? new Date(f.ended_at).getTime() : Date.now()) - new Date(f.started_at).getTime()) / 60000)), 0);
+  const loggedMin = ((timeQ.data ?? []) as { minutes: number }[]).reduce((m, t) => m + t.minutes, 0);
+  const subCost = ((subsQ.data ?? []) as { amount_cents: number; cycle: "monthly" | "yearly" | "weekly" }[]).reduce((c, x) => c + monthlyCents(x), 0);
+  const stats: [string, string][] = [
+    ["Open tasks", String(open.length)],
+    ["Done, 14 days", String(done14)],
+    ["Focus, 14 days", `${Math.floor(focusMin / 60)}h ${focusMin % 60}m`],
+    ...(p.kind === "client" ? [["Hours logged", `${Math.floor(loggedMin / 60)}h${loggedMin % 60 ? ` ${loggedMin % 60}m` : ""}`] as [string, string]] : []),
+    ...(subCost ? [["Costs / month", `$${(subCost / 100).toFixed(0)}`] as [string, string]] : []),
+  ];
 
   return (
     <div className="fade-in space-y-6">
@@ -73,6 +97,24 @@ export default async function ProjectPage({
         <div className="hero !p-4 text-[15px]"><span className="label mr-2">Goal</span>{p.goal}</div>
       )}
 
+      {!isNew && health && (
+        <section className="card grid gap-4 !p-4 md:grid-cols-[1fr_220px] md:items-center">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="min-w-[9rem]">
+              <HealthChip h={health} />
+              <div className="mt-1.5 text-[12px] text-muted">{health.reasons.length ? health.reasons.join(" · ") : health.level === "idle" ? "Not active" : "Nothing needs you here"}</div>
+            </div>
+            {stats.map(([k, v]) => (
+              <div key={k}><div className="text-[18px] font-semibold tabular-nums leading-none">{v}</div><div className="mt-1 text-[11.5px] text-muted">{k}</div></div>
+            ))}
+          </div>
+          <div>
+            <DoneBars data={bars} />
+            <div className="mt-1 flex justify-between text-[10.5px] text-faint"><span>14 days ago</span><span>today</span></div>
+          </div>
+        </section>
+      )}
+
       {cap && (
         <div className="card flex items-start gap-3 !border-[rgba(255,200,87,.35)]">
           <TriangleAlert size={18} className="mt-0.5 text-warn" />
@@ -87,7 +129,7 @@ export default async function ProjectPage({
               <div className="mb-3 flex items-center gap-2"><ListTodo size={16} className="text-accent" /><span className="font-semibold">Tasks</span><span className="text-[13px] text-faint">{open.length} open</span></div>
               <form action={addTask} className="mb-2 flex flex-wrap gap-2">
                 <input type="hidden" name="project_id" value={p.id} />
-                <input name="title" placeholder="Add a task…" autoComplete="off" required className="!w-auto min-w-0 flex-[1_1_12rem]" />
+                <input name="title" placeholder="Add a task…" autoComplete="off" required className="!w-auto min-w-0 flex-[1_1_8rem]" />
                 <input name="due" type="date" className="!w-36 min-w-0 flex-1 sm:flex-none" />
                 <button className="btn">Add</button>
               </form>

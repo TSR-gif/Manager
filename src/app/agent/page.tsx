@@ -35,11 +35,11 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
       <div className="min-w-0">
         <header className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3.5">
-            <Orb size={44} state={cur?.status === "running" ? "working" : "idle"} />
+            <Orb size={40} state={cur?.status === "running" ? "working" : "idle"} />
             <div>
             <h1 className="text-[28px] font-semibold tracking-tight">{name}</h1>
             <p className="text-[13.5px] text-muted">
-              {backend === "claude-code" ? "Running on the Claude Code app on this PC." : "Powered by the Claude API."} Money, accounts and messages as you always come to you first.
+              {backend === "claude-code" ? "Runs on Claude Code on this PC." : "Runs on the Claude API."}<span className="hidden sm:inline"> Money, accounts and messages as you always come to you first.</span>
             </p>
             </div>
           </div>

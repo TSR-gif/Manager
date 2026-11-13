@@ -3,6 +3,7 @@ import { ArrowRight, Plus, TriangleAlert } from "lucide-react";
 import { getProjects, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
 import { rankProjects } from "@/lib/focus";
+import { HEALTH_TONE, projectHealth } from "@/lib/health";
 import { PriorityBadge, ProjectAvatar, SignalChips, StatusDot, ago, dueInfo } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +62,7 @@ export default async function Projects() {
                 const done = pt.length - open;
                 const pct = pt.length ? Math.round((done / pt.length) * 100) : 0;
                 const due = dueInfo(p.deadline);
+                const h = projectHealth(p, tasks, signals[p.id]);
                 return (
                   <Link key={p.id} href={`/projects/${p.id}`} className={`card card-hover group flex flex-col gap-3 ${status === "archived" || status === "done" ? "opacity-60" : ""}`}>
                     <div className="flex items-center gap-3">
@@ -68,9 +70,11 @@ export default async function Projects() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate font-semibold">{p.name}</span>
-                          <StatusDot status={p.status} />
+                          {h.level === "idle" ? <StatusDot status={p.status} /> : (
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: HEALTH_TONE[h.level], boxShadow: `0 0 10px ${HEALTH_TONE[h.level]}` }} title={`${h.label}${h.reasons.length ? `: ${h.reasons.join(", ")}` : ""}`} />
+                          )}
                         </div>
-                        <div className="flex items-center gap-1.5 text-[12px] text-muted">{p.kind === "client" && <span className="chip chip-accent2 !py-0">Client job</span>}touched {ago(p.last_touched_at)}</div>
+                        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-muted">{p.kind === "client" && <span className="chip chip-accent2 !py-0">Client</span>}<span className="truncate">touched {ago(p.last_touched_at)}</span></div>
                       </div>
                       <PriorityBadge p={p.priority} />
                     </div>
@@ -79,7 +83,7 @@ export default async function Projects() {
                     </div>
                     <div>
                       <div className="mb-1.5 flex justify-between text-[11.5px] text-muted">
-                        <span>{open} open · {done} done</span>
+                        <span>{open} open · {done} done{h.level !== "idle" && <> · <span style={{ color: HEALTH_TONE[h.level] }} title={h.reasons.join(", ")}>{h.level === "good" ? h.label : h.reasons[0]}</span></>}</span>
                         {due && <span className={due.tone === "bad" ? "text-bad" : due.tone === "warn" ? "text-warn" : ""}>Due {due.text}</span>}
                       </div>
                       <div className="h-1.5 overflow-hidden rounded-full bg-line">

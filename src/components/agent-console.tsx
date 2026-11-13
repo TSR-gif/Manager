@@ -106,8 +106,8 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
     <div className="flex min-h-[70dvh] flex-col">
       {empty ? (
         <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
-          <div className="mb-5"><Orb size={64} /></div>
-          <h2 className="text-[22px] font-semibold tracking-tight">Hi, I&apos;m {name}. What can I do for you?</h2>
+          <div className="mb-4 hidden sm:block"><Orb size={64} /></div>
+          <h2 className="text-[19px] font-semibold tracking-tight sm:text-[22px]">Hi, I&apos;m {name}. What can I do for you?</h2>
           <p className="mt-1 max-w-md text-[14px] text-muted">Ask a question or hand me a job. I plan it, do what I can (tasks, research, GitHub, decisions), and anything that costs money or acts as you goes to Approvals first.</p>
           <div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-2">
             {SUGGESTIONS.map((s) => (
@@ -166,7 +166,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
           <textarea
             value={input} onChange={(e) => setInput(e.target.value)} rows={1}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
-            placeholder={goal ? "Follow up…" : "Ask anything, or tell me what to get done…"}
+            placeholder={goal ? "Follow up…" : "Ask anything…"}
             className="!max-h-40 !min-h-[44px] flex-1 resize-none !border-0 !bg-transparent !shadow-none"
           />
           <MicButton onText={setInput} />

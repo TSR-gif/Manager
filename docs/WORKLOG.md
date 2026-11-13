@@ -119,3 +119,9 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - Nav: Money added (phone bar: Today, Assistant, Projects, Money, Approvals; Ideas and About you on desktop sidebar).
 - Fixed: project page overflowed sideways on phones (add-task row); dev badge hidden.
 - Screenshots of every screen, desktop + phone, in project files `manager/screenshots/` (sample hours/subscriptions in the dev copy only).
+
+**10:20–10:50 — Project health lights, per-project dashboard, phone polish**
+- **Health lights** (`src/lib/health.ts`): every active project gets green "On track", amber "Needs a nudge" or red "At risk", with the reasons on hover. Red: deploy failing, past deadline, overdue tasks, untouched 14+ days. Amber: untouched 7+ days, no next action, no open tasks, deadline within 3 days with more than 2 tasks open. Shown on the Projects list.
+- **Per-project dashboard** at the top of each project page: the health light and why, open tasks, done in the last 14 days, focus time (14 days), hours logged (client jobs), monthly costs from subscriptions, and a 14-day bar chart of finished tasks.
+- Phone polish: Assistant header shorter on phones, chat empty state tighter; client chip and add-task row no longer overflow.
+- Screenshots regenerated.
