@@ -1,20 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History, Megaphone, Radar } from "lucide-react";
-import { addTask, requestAction, saveBrief, saveProject, saveRules, setProjectFolder, studyNow, toggleWatch } from "@/app/actions";
+import { ArrowLeft, ChevronRight, GitBranch, Globe, Plus, TriangleAlert } from "lucide-react";
+import { addTask, answerMissionForm, decideAction, saveBrief, saveProject, saveRules, setProjectFolder, studyNow, toggleWatch } from "@/app/actions";
 import { Md } from "@/components/md";
-import { Orb } from "@/components/orb";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
-import { Empty, PriorityBadge, ProjectAvatar, priorityLabel, SignalChips, StatusDot, ago } from "@/components/ui";
+import { ProjectAvatar, priorityLabel, ago, money } from "@/components/ui";
+import { ProjectAsk } from "@/components/project-ask";
+import { db } from "@/lib/db";
 import { TaskItem } from "@/components/task-item";
 import type { Project } from "@/lib/types";
-import { doneByDay, projectHealth } from "@/lib/health";
-import { DoneBars, HealthChip } from "@/components/health";
-import { db } from "@/lib/db";
-import { monthlyCents } from "@/lib/money";
+import { projectHealth } from "@/lib/health";
 import { localState } from "@/lib/local-repos";
-import { BookOpen, FolderGit2, ShieldAlert } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -38,271 +35,215 @@ export default async function ProjectPage({
   const [allTasks, settings, actions] = await Promise.all([getTasks({ includeDone: true }), getSettings(), getActions()]);
   const tasks = allTasks.filter((t) => t.project_id === p.id);
   const open = tasks.filter((t) => t.status !== "done");
-  const done = tasks.filter((t) => t.status === "done");
   const signals = isNew ? {} : await getSignals([p]);
   const s = signals[p.id];
   const log = actions.filter((a) => a.project_id === p.id).slice(0, 12);
   const health = isNew ? null : projectHealth(p, tasks, s);
-  const bars = doneByDay(tasks);
-  const done14 = bars.reduce((n, d) => n + d.count, 0);
-  const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
-  const [focusQ, timeQ, subsQ] = isNew ? [{ data: [] }, { data: [] }, { data: [] }] : await Promise.all([
-    db().from("focus_sessions").select("started_at,ended_at,planned_minutes").eq("project_id", p.id).gte("started_at", since),
-    db().from("time_entries").select("minutes").eq("project_id", p.id),
-    db().from("subscriptions").select("amount_cents,cycle,status").eq("project_id", p.id).neq("status", "cancelled"),
-  ]);
-  const focusMin = ((focusQ.data ?? []) as { started_at: string; ended_at: string | null; planned_minutes: number }[])
-    .reduce((m, f) => m + Math.min(f.planned_minutes * 2, Math.round(((f.ended_at ? new Date(f.ended_at).getTime() : Date.now()) - new Date(f.started_at).getTime()) / 60000)), 0);
-  const loggedMin = ((timeQ.data ?? []) as { minutes: number }[]).reduce((m, t) => m + t.minutes, 0);
-  const subCost = ((subsQ.data ?? []) as { amount_cents: number; cycle: "monthly" | "yearly" | "weekly" }[]).reduce((c, x) => c + monthlyCents(x), 0);
-  const statsAll: [string, string][] = [
-    ["Open tasks", String(open.length)],
-    ["Done in 2 weeks", String(done14)],
-    ["Focused in 2 weeks", `${Math.floor(focusMin / 60)}h ${focusMin % 60}m`],
-    ...(p.kind === "client" ? [["Hours logged", `${Math.floor(loggedMin / 60)}h${loggedMin % 60 ? ` ${loggedMin % 60}m` : ""}`] as [string, string]] : []),
-    ...(subCost ? [["Costs a month", `$${(subCost / 100).toFixed(0)}`] as [string, string]] : []),
-  ];
   const localPath = (p as { local_path?: string | null }).local_path ?? null;
   const bp = p as Project & { brief?: string | null; brief_updated_at?: string | null; brief_edited_by_you?: boolean; rules?: string | null };
   const hasCodeHere = !!(p.github_repo || localPath);
   const local = !isNew && localPath ? await localState(localPath) : null;
-  const shownStats = statsAll.filter(([k, v]) => k === "Open tasks" || !/^0(h 0m)?$/.test(v));
+
+  const form = (
+    <form action={saveProject} className="space-y-4">
+      <input type="hidden" name="id" value={p.id} />
+      <Field label="Name"><input name="name" defaultValue={p.name} required placeholder="e.g. Clothing Brand" /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Status">
+          <select name="status" defaultValue={p.status}>
+            {["active", "paused", "idea", "done", "archived"].map((x) => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
+          </select>
+        </Field>
+        <Field label="Priority">
+          <select name="priority" defaultValue={p.priority}>
+            {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{priorityLabel(x)}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Goal"><input name="goal" defaultValue={p.goal ?? ""} placeholder="What does done look like?" /></Field>
+      <Field label="Next step"><input name="next_action" defaultValue={p.next_action ?? ""} placeholder="The very next physical step" /></Field>
+      <Field label="Deadline"><input type="date" name="deadline" defaultValue={p.deadline ?? ""} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="GitHub repo"><input name="github_repo" defaultValue={p.github_repo ?? ""} placeholder="TSR-gif/name" /></Field>
+        <Field label="Vercel project"><input name="vercel_project" defaultValue={p.vercel_project ?? ""} placeholder="project-name" /></Field>
+      </div>
+      <Field label="Notes"><textarea name="notes" rows={4} defaultValue={p.notes ?? ""} placeholder="Links, context, anything" /></Field>
+      {cap && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="force" value="1" className="!w-auto" /> Activate anyway</label>}
+      <button className="btn btn-primary w-full">{isNew ? "Create project" : "Save changes"}</button>
+    </form>
+  );
+
+  if (isNew) {
+    return (
+      <div className="fade-in mx-auto max-w-[640px] space-y-6">
+        <Link href="/projects" className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-text"><ArrowLeft size={14} /> Projects</Link>
+        <h1 className="display text-[26px] md:text-[30px]">New project</h1>
+        {cap && <div className="card card-alert flex items-start gap-3"><TriangleAlert size={18} className="mt-0.5 text-warn" /><div className="text-[14px]">You already have {settings.max_active_projects} active projects. Pause one first, or tick <b>activate anyway</b>.</div></div>}
+        <section className="card">{form}</section>
+      </div>
+    );
+  }
+
+  const pend = actions.filter((a) => a.project_id === p.id && a.status === "pending");
+  const { data: wq } = await db().from("missions").select("id,question").eq("project_id", p.id).eq("status", "waiting");
+  const asks = (wq ?? []) as { id: string; question: string | null }[];
+  const needN = pend.length + asks.length;
+  const status = needN ? `${needN} thing${needN === 1 ? "" : "s"} need${needN === 1 ? "s" : ""} you` : health?.level === "bad" ? "Something's wrong, I'm looking into it" : p.status === "active" ? "On track. Nothing needs you." : p.status[0].toUpperCase() + p.status.slice(1);
+  const top = open.slice(0, 5), more = open.slice(5);
 
   return (
-    <div className="fade-in space-y-6">
+    <div className="fade-in mx-auto max-w-[620px] space-y-7 pt-2 md:pt-8">
       <Link href="/projects" className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-text"><ArrowLeft size={14} /> Projects</Link>
 
-      <header className="flex flex-wrap items-center gap-4">
-        {!isNew && <ProjectAvatar name={p.name} size={54} />}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="display truncate text-[26px] md:text-[30px]">{isNew ? "New project" : p.name}</h1>
-            {!isNew && <StatusDot status={p.status} />}
-          </div>
-          {!isNew && (
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <PriorityBadge p={p.priority} />
-              {p.kind === "client" && <span className="chip chip-accent2">Client job</span>}
-              <span className="chip capitalize">{p.status}</span>
-              <SignalChips s={s} />
-              <form action={toggleWatch} className="inline">
-                <input type="hidden" name="id" value={p.id} />
-                <button className={`chip cursor-pointer transition hover:border-accent ${(p as { watch?: boolean }).watch ? "chip-accent" : ""}`}
-                  title="MyManager checks this project regularly and tells you when it slips">
-                  {(p as { watch?: boolean }).watch ? <><Orb size={10} /> Keeping an eye on it</> : "+ Keep an eye on this"}
-                </button>
-              </form>
-              <Link href={`/supervise?project=${p.id}`} className="chip transition hover:border-accent"><Radar size={11} /> Supervise</Link>
-              {p.kind !== "client" && <Link href={`/marketing?project=${p.id}`} className="chip transition hover:border-accent"><Megaphone size={11} /> Posts and ads</Link>}
-            </div>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {s?.vercel?.url && <a className="btn" href={s.vercel.url} target="_blank"><Globe size={15} /> Live</a>}
-          {p.github_repo && <a className="btn" href={`https://github.com/${p.github_repo}`} target="_blank"><GitBranch size={15} /> Repo <ExternalLink size={12} /></a>}
+      <header className="flex items-center gap-3.5">
+        <ProjectAvatar name={p.name} size={40} />
+        <div className="min-w-0">
+          <h1 className="display truncate text-[26px] md:text-[28px]">{p.name}</h1>
+          <div className={`text-[14px] ${needN ? "text-warn" : "text-muted"}`}>{status}</div>
         </div>
       </header>
 
-      {p.goal && !isNew && (
-        <div className="hero !p-4 text-[15px]"><span className="label mr-2">Goal</span>{p.goal}</div>
+      {needN > 0 && (
+        <ul className="card card-alert divide-y divide-line !p-0">
+          {asks.map((m) => (
+            <li key={m.id} className="px-4 py-3.5">
+              <div className="text-[14.5px] leading-snug">{m.question}</div>
+              <form action={answerMissionForm} className="mt-2.5 flex gap-2">
+                <input type="hidden" name="id" value={m.id} />
+                <input name="answer" placeholder="Your answer" required autoComplete="off" className="!h-10" />
+                <button className="btn btn-primary shrink-0 !h-10">Send</button>
+              </form>
+            </li>
+          ))}
+          {pend.map((a) => (
+            <li key={a.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1 text-[14.5px] leading-snug">{a.title}</div>
+              <form action={decideAction.bind(null, a.id, false)}><button className="btn btn-ghost btn-sm">Not now</button></form>
+              <form action={decideAction.bind(null, a.id, true)}><button className="btn btn-good btn-sm">{a.cost_cents > 0 ? `OK, ${money(a.cost_cents)}` : "OK"}</button></form>
+            </li>
+          ))}
+        </ul>
       )}
 
-      {!isNew && (
-        <section className="card">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div className="kicker flex items-center gap-2"><BookOpen size={13} />What MyManager knows</div>
-            <span className="text-[12px] text-faint">
-              {bp.brief_updated_at ? `written ${ago(bp.brief_updated_at)}${bp.brief_edited_by_you ? ", corrected by you" : ""}` : hasCodeHere ? "not studied yet" : "no code to study"}
-            </span>
-            {hasCodeHere && (
-              <form action={studyNow} className="ml-auto">
-                <input type="hidden" name="id" value={p.id} />
-                <button className="btn !min-h-9 !px-3 !text-[13px]">{bp.brief ? "Study it again" : "Study it now"}</button>
-              </form>
-            )}
-          </div>
-          {bp.brief ? (
-            <details className="group">
-              <summary className="cursor-pointer list-none">
-                <Md text={bp.brief.split(/\n(?=## )/).slice(0, 1).join("")} className="text-[14px] leading-relaxed" />
-                <span className="mt-2 inline-block text-[13px] text-accent group-open:hidden">Show the whole brief</span>
-              </summary>
-              <Md text={bp.brief.split(/\n(?=## )/).slice(1).join("\n")} className="mt-2.5 text-[14px] leading-relaxed" />
-              <details className="mt-3">
-                <summary className="cursor-pointer list-none text-[13px] text-accent">Fix something in it</summary>
-                <form action={saveBrief} className="mt-2 space-y-2">
-                  <input type="hidden" name="id" value={p.id} />
-                  <textarea name="brief" defaultValue={bp.brief} rows={14} className="font-mono !text-[12.5px]" />
-                  <button className="btn">Save brief</button>
-                </form>
-              </details>
+      <ProjectAsk name={p.name} />
+
+      <section>
+        <h2 className="mb-2 text-[15px] font-semibold px-1">Your to-dos</h2>
+        <div className="card !px-2 !py-1.5">
+          {open.length === 0 && <div className="px-2 py-3 text-[14px] text-muted">Nothing for you to do here.</div>}
+          <ul>{top.map((t) => <TaskItem key={t.id} t={t} compact />)}</ul>
+          {more.length > 0 && (
+            <details>
+              <summary className="cursor-pointer list-none px-2 py-2 text-[13px] text-muted hover:text-text">{more.length} more</summary>
+              <ul>{more.map((t) => <TaskItem key={t.id} t={t} compact />)}</ul>
             </details>
-          ) : hasCodeHere ? (
-            <p className="text-[13.5px] text-muted">MyManager will read this project&apos;s code and write down what it is, how it&apos;s built, how to run it, where it&apos;s at and what&apos;s next. It does this on its own within the next few checks, or press Study it now.</p>
-          ) : (
-            <form action={saveBrief} className="space-y-2">
-              <p className="text-[13.5px] text-muted">There&apos;s no code for this one, so tell MyManager what it is, who it&apos;s for, where it&apos;s at and what&apos;s next. It reads this before helping.</p>
-              <input type="hidden" name="id" value={p.id} />
-              <textarea name="brief" rows={5} placeholder={"What it is:\nWhere it's at:\nWhat's next:"} />
-              <button className="btn">Save</button>
-            </form>
           )}
-          <div className="mt-4 border-t border-line pt-3">
-            <div className="label mb-2 flex items-center gap-1.5"><ShieldAlert size={12} />Your rules for this project</div>
-            <form action={saveRules} className="space-y-2">
-              <input type="hidden" name="id" value={p.id} />
-              <textarea name="rules" defaultValue={bp.rules ?? ""} rows={2} placeholder="e.g. Pretend money only. Never touch the live site on Fridays." />
-              <div className="flex items-center gap-3"><button className="btn">Save rules</button><span className="text-[12px] text-faint">MyManager always follows these and never changes them.</span></div>
-            </form>
-          </div>
-        </section>
-      )}
-
-      {!isNew && (
-        <section className="card">
-          <div className="kicker mb-3 flex items-center gap-2"><FolderGit2 size={13} />On this PC</div>
-          {local ? (
-            <div className="grid gap-x-6 gap-y-2 text-[13.5px] sm:grid-cols-2">
-              <div><span className="text-faint">Branch </span><span className="font-mono text-[13px]">{local.branch}</span>{local.ahead ? <span className="text-warn"> · {local.ahead} not pushed</span> : null}{local.behind ? <span className="text-warn"> · {local.behind} behind GitHub</span> : null}</div>
-              <div><span className="text-faint">Unsaved changes </span>{local.changed ? <span className="text-warn">{local.changed} file{local.changed > 1 ? "s" : ""}</span> : "none"}</div>
-              <div className="truncate sm:col-span-2"><span className="text-faint">Last commit </span>{local.lastCommit || "none"}</div>
-              {local.workBranches.length > 0 && (
-                <div className="sm:col-span-2"><span className="text-faint">MyManager&apos;s work </span>{local.workBranches.map((b) => <span key={b.name} className="chip chip-accent2 mr-1.5 font-mono">{b.name} · {b.commits} commit{b.commits === 1 ? "" : "s"}</span>)}</div>
-              )}
-            </div>
-          ) : (
-            <p className="text-[13.5px] text-muted">{localPath ? "That folder isn't a git folder (moved or deleted?)." : "Not linked to a folder yet. Set it so MyManager can see your local changes and do coding steps for you."}</p>
-          )}
-          <form action={setProjectFolder} className="mt-3 flex gap-2">
-            <input type="hidden" name="id" value={p.id} />
-            <input name="local_path" defaultValue={localPath ?? ""} placeholder="e.g. C:\Users\you\Documents\DayTrader" className="font-mono !text-[13px]" />
-            <button className="btn shrink-0">Save</button>
+          <form action={addTask} className="flex items-center gap-2 border-t border-line px-2 pb-1 pt-2">
+            <input type="hidden" name="project_id" value={p.id} />
+            <Plus size={16} className="ml-1 text-faint" />
+            <input name="title" placeholder="Add a to-do" autoComplete="off" required className="!h-9 flex-1 !border-0 !bg-transparent !px-1 !shadow-none text-[14px]" />
           </form>
-        </section>
-      )}
-
-      {!isNew && health && health.level !== "idle" && (
-        <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
-          <HealthChip h={health} />
-          <span>{health.reasons.length ? health.reasons.join(" · ") : "Nothing needs you here"}</span>
         </div>
-      )}
+      </section>
 
-      {cap && (
-        <div className="card flex items-start gap-3 card-alert">
-          <TriangleAlert size={18} className="mt-0.5 text-warn" />
-          <div className="text-[14px]">You already have {settings.max_active_projects} active projects. Pause one first, or tick <b>activate anyway</b> below.</div>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1 text-[13px] text-faint hover:text-muted">
+          <ChevronRight size={14} className="transition group-open:rotate-90" /> Details
+        </summary>
+        <div className="mt-3 space-y-4">
+      <section className="card">
+        {p.goal && <div className="mb-3 text-[14px]"><span className="label mr-2">Goal</span>{p.goal}</div>}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[15px] font-semibold">What I know about it</span>
+          <span className="text-[12px] text-faint">
+            {bp.brief_updated_at ? `written ${ago(bp.brief_updated_at)}${bp.brief_edited_by_you ? ", corrected by you" : ""}` : hasCodeHere ? "not studied yet" : "no code to study"}
+          </span>
+          {hasCodeHere && (
+            <form action={studyNow} className="ml-auto">
+              <input type="hidden" name="id" value={p.id} />
+              <button className="btn btn-sm">{bp.brief ? "Study it again" : "Study it now"}</button>
+            </form>
+          )}
         </div>
-      )}
-
-      <div className="grid gap-5 lg:grid-cols-[1.25fr_1fr] [&>*]:min-w-0">
-        <div className="space-y-5">
-          {!isNew && (
-            <section className="card">
-              <div className="mb-3 flex items-center gap-2"><ListTodo size={16} className="text-accent" /><span className="font-semibold">Tasks</span><span className="text-[13px] text-faint">{open.length} open</span></div>
-              <form action={addTask} className="mb-2 flex flex-wrap gap-2">
-                <input type="hidden" name="project_id" value={p.id} />
-                <input name="title" placeholder="Add a task…" autoComplete="off" required className="!w-auto min-w-0 flex-[1_1_8rem]" />
-                <input name="due" type="date" className="!w-36 min-w-0 flex-1 sm:flex-none" />
-                <button className="btn">Add</button>
+        {bp.brief ? (
+          <details className="group">
+            <summary className="cursor-pointer list-none">
+              <Md text={bp.brief.split(/\n(?=## )/).slice(0, 1).join("")} className="text-[14px] leading-relaxed" />
+              <span className="mt-2 inline-block text-[13px] text-accent group-open:hidden">Show more</span>
+            </summary>
+            <Md text={bp.brief.split(/\n(?=## )/).slice(1).join("\n")} className="mt-2.5 text-[14px] leading-relaxed" />
+            <details className="mt-3">
+              <summary className="cursor-pointer list-none text-[13px] text-accent">Fix something in it</summary>
+              <form action={saveBrief} className="mt-2 space-y-2">
+                <input type="hidden" name="id" value={p.id} />
+                <textarea name="brief" defaultValue={bp.brief} rows={14} className="font-mono !text-[12.5px]" />
+                <button className="btn">Save</button>
               </form>
-              {open.length === 0 && <Empty icon={<Sparkles size={18} />} title="No open tasks" hint="Break the next action into 2–3 small steps." />}
-              <ul className="-mx-2">{open.map((t) => <TaskItem key={t.id} t={t} />)}</ul>
-              {done.length > 0 && (
-                <details className="mt-2">
-                  <summary className="cursor-pointer px-2 text-[12.5px] text-muted">{done.length} completed</summary>
-                  <ul className="-mx-2 mt-1">{done.slice(0, 20).map((t) => <TaskItem key={t.id} t={t} compact />)}</ul>
-                </details>
-              )}
-            </section>
-          )}
+            </details>
+          </details>
+        ) : hasCodeHere ? (
+          <p className="text-[13.5px] text-muted">MyManager will read the code and write down what it is, how to run it, where it&apos;s at and what&apos;s next. It does this by itself soon, or press Study it now.</p>
+        ) : (
+          <form action={saveBrief} className="space-y-2">
+            <p className="text-[13.5px] text-muted">No code for this one, so tell MyManager what it is, where it&apos;s at and what&apos;s next.</p>
+            <input type="hidden" name="id" value={p.id} />
+            <textarea name="brief" rows={4} placeholder={"What it is:\nWhere it's at:\nWhat's next:"} />
+            <button className="btn">Save</button>
+          </form>
+        )}
+        {bp.rules && <div className="mt-3 border-t border-line pt-3 text-[13px] text-muted"><span className="label mr-2">Your rules</span>{bp.rules}</div>}
+      </section>
 
-          {!isNew && (
-            <section className="card">
-              <div className="mb-1 flex items-center gap-2"><Send size={16} className="text-accent2" /><span className="font-semibold">Ask {(settings as { assistant_name?: string }).assistant_name || "MyManager"} to do something</span></div>
-              <p className="mb-3 text-[13px] text-muted">GitHub issues run straight away. Everything else waits for your approval.</p>
-              <form action={requestAction} className="space-y-2">
-                <input type="hidden" name="project_id" value={p.id} />
-                <input type="hidden" name="repo" value={p.github_repo ?? ""} />
-                <input type="hidden" name="project" value={p.vercel_project ?? ""} />
-                <select name="kind" defaultValue={p.github_repo ? "github.create_issue" : "other"}>
-                  {p.github_repo && <option value="github.create_issue">Create a GitHub issue</option>}
-                  {p.vercel_project && <option value="vercel.redeploy">Redeploy production on Vercel</option>}
-                  <option value="signup">Sign up for a service</option>
-                  <option value="purchase">Buy something</option>
-                  <option value="email.send">Send an email</option>
-                  <option value="pc.session">Do something on my PC</option>
-                  <option value="other">Something else</option>
-                </select>
-                <input name="title" placeholder="What should happen?" required />
-                <div className="grid grid-cols-[1fr_9rem] gap-2">
-                  <input name="url" placeholder="Link (optional)" />
-                  <input name="cost" type="number" step="0.01" min="0" placeholder="Cost $" />
-                </div>
-                <button className="btn w-full">Queue it</button>
-              </form>
-            </section>
-          )}
-
-          {log.length > 0 && (
-            <section className="card">
-              <div className="mb-2 flex items-center gap-2"><History size={16} className="text-muted" /><span className="font-semibold">Activity</span></div>
-              <ul className="divide-y divide-line text-[13.5px]">
-                {log.map((a) => (
-                  <li key={a.id} className="flex items-center justify-between gap-2 py-2">
-                    <span className="truncate">{a.title}</span>
-                    <span className="shrink-0 text-[12px] text-muted">{a.status} · {ago(a.created_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+      <section className="card">
+        <div className="space-y-6">
+          <form action={saveRules} className="space-y-2">
+            <input type="hidden" name="id" value={p.id} />
+            <span className="label">Your rules (MyManager always follows these)</span>
+            <textarea name="rules" defaultValue={bp.rules ?? ""} rows={2} placeholder="e.g. Pretend money only. Never touch the live site on Fridays." />
+            <button className="btn btn-sm">Save rules</button>
+          </form>
+          <div className="space-y-2">
+            <span className="label">Folder on this PC</span>
+            {local && (
+              <div className="grid gap-x-6 gap-y-1 text-[13px] text-muted sm:grid-cols-2">
+                <div>Branch <span className="font-mono text-text">{local.branch}</span>{local.ahead ? <span className="text-warn"> · {local.ahead} not pushed</span> : null}</div>
+                <div>Unsaved changes {local.changed ? <span className="text-warn">{local.changed}</span> : "none"}</div>
+                <div className="truncate sm:col-span-2">Last commit {local.lastCommit || "none"}</div>
+              </div>
+            )}
+            <form action={setProjectFolder} className="flex gap-2">
+              <input type="hidden" name="id" value={p.id} />
+              <input name="local_path" defaultValue={localPath ?? ""} placeholder="e.g. C:\\Users\\you\\Documents\\DayTrader" className="font-mono !text-[13px]" />
+              <button className="btn shrink-0">Save</button>
+            </form>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <form action={toggleWatch}><input type="hidden" name="id" value={p.id} /><button className="btn btn-sm">{(p as { watch?: boolean }).watch ? "Stop keeping an eye on it" : "Keep an eye on it"}</button></form>
+            {p.kind !== "client" && <Link href={`/marketing?project=${p.id}`} className="btn btn-sm">Posts and ads</Link>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {s?.vercel?.url && <a className="btn btn-sm" href={s.vercel.url} target="_blank"><Globe size={14} /> Live site</a>}
+            {p.github_repo && <a className="btn btn-sm" href={`https://github.com/${p.github_repo}`} target="_blank"><GitBranch size={14} /> Code</a>}
+          </div>
+          {form}
         </div>
+      </section>
 
-        <form action={saveProject} className="card h-fit space-y-4">
-          <div className="flex items-center gap-2"><Settings2 size={16} className="text-muted" /><span className="font-semibold">{isNew ? "Details" : "Settings"}</span></div>
-          <input type="hidden" name="id" value={p.id} />
-          <Field label="Name"><input name="name" defaultValue={p.name} required placeholder="e.g. Clothing Brand" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Status">
-              <select name="status" defaultValue={p.status}>
-                {["active", "paused", "idea", "done", "archived"].map((x) => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
-              </select>
-            </Field>
-            <Field label="Priority">
-              <select name="priority" defaultValue={p.priority}>
-                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{priorityLabel(x)}</option>)}
-              </select>
-            </Field>
-          </div>
-          <Field label="Goal"><input name="goal" defaultValue={p.goal ?? ""} placeholder="What does done look like?" /></Field>
-          <Field label="Next action"><input name="next_action" defaultValue={p.next_action ?? ""} placeholder="The very next physical step" /></Field>
-          <Field label="Deadline"><input type="date" name="deadline" defaultValue={p.deadline ?? ""} /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="GitHub repo"><input name="github_repo" defaultValue={p.github_repo ?? ""} placeholder="TSR-gif/name" /></Field>
-            <Field label="Vercel project"><input name="vercel_project" defaultValue={p.vercel_project ?? ""} placeholder="project-name" /></Field>
-          </div>
-          <Field label="Notes"><textarea name="notes" rows={5} defaultValue={p.notes ?? ""} placeholder="Links, context, anything" /></Field>
-          {cap && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="force" value="1" className="!w-auto" /> Activate anyway</label>}
-          <button className="btn btn-primary w-full">{isNew ? "Create project" : "Save changes"}</button>
-        </form>
-      </div>
-
-      {!isNew && (shownStats.length > 1 || done14 > 0) && (
-        <section className="card grid gap-4 !p-4 md:grid-cols-[1fr_220px] md:items-center">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            {shownStats.map(([k, v]) => (
-              <div key={k}><div className="text-[18px] font-semibold tabular-nums leading-none">{v}</div><div className="mt-1 text-[11.5px] text-muted">{k}</div></div>
+      {log.length > 0 && (
+        <details className="card">
+          <summary className="cursor-pointer list-none text-[15px] font-semibold">History <span className="text-[12px] font-normal text-faint">{log.length}</span></summary>
+          <ul className="mt-3 divide-y divide-line text-[13.5px]">
+            {log.map((a) => (
+              <li key={a.id} className="flex items-center justify-between gap-2 py-2">
+                <span className="truncate">{a.title}</span>
+                <span className="shrink-0 text-[12px] text-muted">{a.status} · {ago(a.created_at)}</span>
+              </li>
             ))}
-          </div>
-          {done14 > 0 && (
-            <div>
-              <DoneBars data={bars} />
-              <div className="mt-1 flex justify-between text-[10.5px] text-faint"><span>2 weeks ago</span><span>today</span></div>
-            </div>
-          )}
-        </section>
+          </ul>
+        </details>
       )}
+        </div>
+      </details>
     </div>
   );
 }

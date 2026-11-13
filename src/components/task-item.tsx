@@ -1,4 +1,4 @@
-import { Play, X } from "lucide-react";
+import { X } from "lucide-react";
 import { deleteTask, setTaskStatus } from "@/app/actions";
 import { CheckIcon, dueInfo, projectColor } from "./ui";
 import type { Task } from "@/lib/types";
@@ -25,12 +25,7 @@ export function TaskItem({ t, projectName, compact }: { t: Task; projectName?: s
           </div>
         )}
       </div>
-      <div className="flex items-center gap-1 opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
-        {t.status === "todo" && (
-          <form action={setTaskStatus.bind(null, t.id, "doing")}>
-            <button className="btn btn-ghost btn-sm" aria-label="Start"><Play size={13} /></button>
-          </form>
-        )}
+      <div className="flex items-center gap-1 hidden md:flex md:opacity-0 md:transition md:group-hover:opacity-100">
         <form action={deleteTask.bind(null, t.id)}>
           <button className="btn btn-ghost btn-sm hover:!text-bad" aria-label="Delete"><X size={14} /></button>
         </form>

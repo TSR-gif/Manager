@@ -61,6 +61,12 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
     strict: true,
   },
   {
+    name: "watch_job",
+    description: "Watch a program Thomas already started himself on his PC (e.g. run_saturday_job, a backtest, a data download) until it finishes. MyManager keeps the PC awake meanwhile, follows a log file if you name one (path inside the project folder), and messages him when it finishes, stops with an error, goes quiet for 45 minutes, or runs much longer than expected. Read-only, so it starts straight away. Use check_project_activity first to see what's running and which log it writes.",
+    input_schema: { type: "object", properties: { project_name: str, match: { type: "string", description: "Text from the program's command line, e.g. run_saturday_job or pc_saturday.py" }, log: { type: ["string", "null"] }, expect_hours: { type: ["number", "null"] } }, required: ["project_name", "match", "log", "expect_hours"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "runbook_status",
     description: "See the runbooks on Thomas's PC: which are waiting for his OK, running (and what the long jobs last printed), waiting on him, or finished. Use it when he asks how a job or runbook is going.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
@@ -364,11 +370,18 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const { draftRunbook } = await import("@/lib/runbooks");
         const res = await draftRunbook({ project_id: p?.id ?? null, work_dir: dir, title: String(input.title), steps: (input.steps as never[]) ?? [] });
         if (!res.ok) return { label: "Couldn't plan that runbook", result: `Not saved. Fix these and try again:\n${res.problems.join("\n")}`, isError: true };
-        return { label: `Planned “${input.title}”, waiting for your OK`, result: "Saved. It's in Approvals as one list; nothing runs until Thomas approves. Deleting and setup commands ask again at that step. Progress shows on the Supervise screen and comes to Telegram." };
+        return { label: `Planned “${input.title}”, waiting for your OK`, result: "Saved. It's in Approvals as one list; nothing runs until Thomas approves. Deleting and setup commands ask again at that step. Progress shows on the Running screen and comes to Telegram." };
       }
       case "find_services": {
         const { findServices } = await import("@/lib/services");
         return { label: "Looked through your project folders and sign-ins", result: await findServices() };
+      }
+      case "watch_job": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return noProject(input.project_name);
+        const { watchJob } = await import("@/lib/runbooks");
+        const st = await watchJob({ project_id: p.id, work_dir: (p as { local_path?: string | null }).local_path ?? null, match: String(input.match), log: (input.log as string) || undefined, expect_hours: (input.expect_hours as number) || undefined, title: `${p.name}: watching ${input.match}` });
+        return { label: st.status === "running" ? `Watching ${input.match} on your PC` : `${input.match} isn't running`, result: `${st.note ?? st.status}. It shows on the Running screen; Thomas gets a message when it finishes or stalls.` };
       }
       case "runbook_status": {
         const { data } = await db().from("runbooks").select("*").order("created_at", { ascending: false }).limit(8);
@@ -532,7 +545,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           coding = a.status === "pending" ? " Coding on his PC is waiting for his OK in Approvals." : "";
         }
         await did(`Started supervising ${p.name}: ${String(input.goal).slice(0, 60)}`, { op: "update", table: "missions", id: m.id, values: { status: "stopped" } });
-        return { label: `Supervising ${p.name}`, result: `Mission ${m.id} started with ${steps.length} steps. First check in about a minute, then every ${hours} hour(s). It shows on the Supervise screen.${coding}` };
+        return { label: `Supervising ${p.name}`, result: `Mission ${m.id} started with ${steps.length} steps. First check in about a minute, then every ${hours} hour(s). It shows on the Running screen.${coding}` };
       }
       case "add_mission_step": {
         const { data: m } = await db().from("missions").select("project_id").eq("id", input.mission_id).maybeSingle();

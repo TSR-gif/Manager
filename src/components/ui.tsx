@@ -45,6 +45,12 @@ export function projectColor(name: string) {
   return `hsl(${hue(name)} 75% 66%)`;
 }
 
+/** Small square project chip used in lists and the sidebar. */
+export function ProjectChip({ name }: { name: string }) {
+  const h = hue(name);
+  return <span className="pi" style={{ background: `hsl(${h} 70% 60% / .16)`, color: `hsl(${h} 75% 70%)` }}>{name[0]?.toUpperCase()}</span>;
+}
+
 export function ProjectAvatar({ name, size = 36 }: { name: string; size?: number }) {
   const h = hue(name);
   const initials = name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();

@@ -35,7 +35,10 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
   const { data: rbData } = await db().from("runbooks").select("*").order("created_at", { ascending: false }).limit(12);
   const runbooks = ((rbData ?? []) as Runbook[]).filter((r) => !project || r.project_id === project)
     .filter((r) => ["queued", "running", "waiting"].includes(r.status) || Date.now() - new Date(r.finished_at ?? r.created_at).getTime() < 3 * 86_400_000);
-  const tails = Object.fromEntries(runbooks.flatMap((r) => r.steps.list.filter((s) => s.kind === "start_job" && s.status === "running").map((s) => [s.id, jobTail(s.log, 6)])));
+  const liveRb = runbooks.filter((r) => ["queued", "running", "waiting"].includes(r.status));
+  const doneRb = runbooks.filter((r) => !liveRb.includes(r));
+  const rbName = (r: Runbook) => (r.project_id ? (projects.find((p) => p.id === r.project_id)?.name ?? "Project") : "Your PC");
+  const tails = Object.fromEntries(runbooks.flatMap((r) => r.steps.list.filter((s) => (s.kind === "start_job" || s.kind === "watch_process") && s.status === "running").map((s) => [s.id, jobTail(s.log, 6)])));
   const name = (settings as { assistant_name?: string }).assistant_name || "MyManager";
   const all = ((mq.data ?? []) as Mission[]).filter((m) => !project || m.project_id === project);
   const steps = ((sq.data ?? []) as Step[]).filter((s) => s.mission_id);
@@ -55,14 +58,13 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
       : m.can_code ? { t: "Can do the coding", c: "chip-good" }
       : codeAsked.has(m.id) ? { t: "Coding waits for your OK", c: "chip-warn" } : null;
     return (
-      <li id={m.id} className={`card space-y-3 ${m.status === "waiting" ? " card-alert" : ""} ${focus === m.id ? "ring-2 ring-accent/50" : ""}`}>
+      <li id={m.id} className={`card space-y-2 ${m.status === "waiting" ? " card-alert" : ""} ${focus === m.id ? "ring-2 ring-accent/50" : ""}`}>
         <div className="flex items-center gap-2">
           <ProjectAvatar name={pname(m.project_id)} size={22} />
-          <span className="text-[13px] font-medium text-muted">{pname(m.project_id)}</span>
-          {coder && <span className={`chip ${coder.c}`}><Code2 size={11} /> {coder.t}</span>}
-          <span className="ml-auto text-[12px] text-faint">started {ago(m.created_at)}</span>
+          <span className="text-[15px] font-semibold px-1">{pname(m.project_id)}</span>
+          {m.status === "running" && <span className="dot-live ml-auto" />}
         </div>
-        <div className="text-[16px] font-semibold leading-snug">{m.goal}</div>
+        <div className="text-[15px] font-medium leading-snug">{m.goal}</div>
         {m.status === "waiting" && m.question && (
           <div className="space-y-2 rounded-xl border border-[rgba(251,191,36,.35)] bg-[rgba(251,191,36,.07)] p-3">
             <div className="flex gap-2 text-[14px]"><CircleHelp size={16} className="mt-0.5 shrink-0 text-warn" /><span>{m.question}</span></div>
@@ -73,7 +75,11 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
             </form>
           </div>
         )}
-        {m.last_update && <div className="text-[13.5px] text-muted"><b className="font-medium text-text">Where it&apos;s at: </b>{m.last_update}</div>}
+        {m.last_update && <div className="text-[13.5px] text-muted">{m.last_update}</div>}
+        <details className="group">
+          <summary className="cursor-pointer list-none text-[12.5px] text-faint hover:text-muted">Details</summary>
+          <div className="mt-3 space-y-3">
+          {coder && <span className={`chip ${coder.c}`}><Code2 size={11} /> {coder.t}</span>}
         {st.length > 0 && (
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 text-[12px] text-faint">
@@ -115,47 +121,52 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
             </ul>
           </details>
         )}
+          <div className="text-[12px] text-faint">Started {ago(m.created_at)}</div>
+          </div>
+        </details>
       </li>
     );
   };
 
   return (
-    <div className="fade-in space-y-8">
+    <div className="fade-in mx-auto max-w-[620px] space-y-7 pt-2 md:pt-8">
       <header>
-        <h1 className="display text-[26px] md:text-[30px]">Supervise</h1>
-        <p className="mt-1 text-[14px] text-muted">Tell {name} what a project is doing. It keeps checking until it&apos;s finished, ticks off the steps, and messages you when it needs you.</p>
+        <h1 className="display text-[26px] md:text-[28px]">What I&apos;m working on</h1>
+        <p className="mt-1 text-[14px] text-muted">I&apos;ll tell you when I need you. To give me a new job, just ask.</p>
       </header>
 
-      {runbooks.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="kicker !text-muted">On your PC</h2>
-          <ul className="space-y-3">{runbooks.map((r) => <RunbookCard key={r.id} r={r} project={r.project_id ? (projects.find((p) => p.id === r.project_id)?.name ?? "Project") : "Your PC"} tails={tails} />)}</ul>
-        </section>
-      )}
 
       {all.length === 0 && runbooks.length === 0 && (
         <div className="card space-y-3">
-          <Empty icon={<Bot size={18} />} title="Nothing being supervised" hint={`Try telling ${name}: "Day trader is doing the backtest fix and the README, make sure it gets finished."`} />
+          <Empty icon={<Bot size={18} />} title="Nothing on right now" hint={`Tell me something like "make sure the Day trader backtest fix gets finished".`} />
           <div className="flex justify-center"><Link className="btn btn-sm" href={`/agent?ask=${encodeURIComponent("Day trader is doing ")}`}>Tell {name}</Link></div>
         </div>
       )}
 
       {waiting.length > 0 && (
         <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Waiting on you</h2><span className="text-[13px] text-faint">{waiting.length}</span></div>
-          <ul className="grid gap-3 md:grid-cols-2">{waiting.map((m) => <Card key={m.id} m={m} />)}</ul>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="flex items-center gap-2 px-1 text-[15px] font-semibold"><span className="dot-warn" />Needs you</h2><span className="text-[13px] text-faint">{waiting.length}</span></div>
+          <ul className="space-y-3">{waiting.map((m) => <Card key={m.id} m={m} />)}</ul>
+        </section>
+      )}
+
+      {liveRb.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold px-1">On your PC</h2><span className="text-[13px] text-faint">{liveRb.length}</span></div>
+          <ul className="space-y-3">{liveRb.map((r) => <RunbookCard key={r.id} r={r} project={rbName(r)} tails={tails} />)}</ul>
         </section>
       )}
 
       {running.length > 0 && (
         <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Running</h2><span className="text-[13px] text-faint">{running.length}</span></div>
-          <ul className="grid gap-3 md:grid-cols-2">{running.map((m) => <Card key={m.id} m={m} />)}</ul>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold px-1">Working on</h2><span className="text-[13px] text-faint">{running.length}</span></div>
+          <ul className="space-y-3">{running.map((m) => <Card key={m.id} m={m} />)}</ul>
         </section>
       )}
 
-      <details className="card" open={all.length === 0}>
-        <summary className="flex cursor-pointer items-center gap-2 text-[14px] font-medium"><Plus size={15} /> Supervise something new</summary>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1 text-[13px] text-faint hover:text-muted"><Plus size={13} /> Set up a job by hand</summary>
+        <div className="card mt-2">
         <form action={startMission} className="mt-4 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block space-y-1.5"><span className="label">Project</span>
@@ -176,13 +187,17 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
           <p className="text-[12.5px] text-faint">With a folder, {name} asks your OK once, then codes one step at a time on its own branch. It never pushes, deploys or touches real money.</p>
           <button className="btn btn-primary">Start supervising</button>
         </form>
+        </div>
       </details>
 
-      {finished.length > 0 && (
-        <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Finished</h2><span className="text-[13px] text-faint">{finished.length}</span></div>
-          <ul className="grid gap-3 md:grid-cols-2">{finished.map((m) => <Card key={m.id} m={m} />)}</ul>
-        </section>
+      {finished.length + doneRb.length > 0 && (
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-baseline gap-2"><h2 className="text-[13px] font-medium text-faint">Finished</h2><span className="text-[13px] text-faint">{finished.length + doneRb.length} · show</span></summary>
+          <ul className="mt-3 space-y-3">
+            {doneRb.map((r) => <RunbookCard key={r.id} r={r} project={rbName(r)} tails={tails} />)}
+            {finished.map((m) => <Card key={m.id} m={m} />)}
+          </ul>
+        </details>
       )}
     </div>
   );

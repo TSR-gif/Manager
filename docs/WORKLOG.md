@@ -216,3 +216,9 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
   - commit stopped on a test key file, then went through after it was added to .gitignore (venv skipped);
   - delete waited for approval, then removed the folder;
   - sign-in hand-over skipped as not needed.
+
+## 2026-11-14 · Simpler screens, watch jobs you started
+- Thomas: "hard to navigate less is more", "shows lots of infomation on things when it should be hidden as its the managers job to know this". Every screen now shows only what needs him, his to-dos and a one-line status. Briefs, rules, logs, folders and history sit behind "Details" or "More".
+- Menu is Today, Projects, Ask (+ More). Approvals and Running are reached from Today. The sidebar lists projects as "dots" with a light: amber needs you, green working.
+- Look: near-black shell with one inset panel, Inter font (bundled in src/app/fonts so it works offline). A full redesign is being done in its own thread; this is an interim.
+- New `watch_job` tool and `watch_process` runbook step: MyManager watches a job Thomas started himself (match a process, tail its log, ping when it finishes or goes quiet) without starting it again. Read-only, so no approval.

@@ -44,7 +44,7 @@ export function RunbookCard({ r, project, tails }: { r: Runbook; project: string
             <div className="min-w-0 flex-1">
               <div className={s.status === "skipped" ? "text-faint line-through" : ""}>{s.label}{s.optional && <span className="text-faint"> (optional)</span>}</div>
               {s.note && <div className="text-[12.5px] text-muted">{s.note}</div>}
-              {s.kind === "start_job" && s.status === "running" && tails[s.id] && (
+              {(s.kind === "start_job" || s.kind === "watch_process") && s.status === "running" && tails[s.id] && (
                 <pre className="mt-1.5 max-h-28 overflow-auto whitespace-pre-wrap rounded-lg bg-panel3 p-2 font-mono text-[11.5px] text-muted">{tails[s.id]}</pre>
               )}
               {s.status === "waiting" && !s.approval_id && (

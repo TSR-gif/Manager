@@ -730,3 +730,4 @@ export async function runbookStop(form: FormData) {
   await stopRunbook(id);
   refresh();
 }
+

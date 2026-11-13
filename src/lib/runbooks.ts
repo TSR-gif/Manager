@@ -18,7 +18,7 @@ import { allProcesses } from "@/lib/activity";
 const run = promisify(execFile);
 const isWin = process.platform === "win32";
 
-export type StepKind = "start_job" | "stop_process" | "git_commit_push" | "delete_folder" | "open_link" | "handoff" | "run_command";
+export type StepKind = "start_job" | "watch_process" | "stop_process" | "git_commit_push" | "delete_folder" | "open_link" | "handoff" | "run_command";
 export interface Step {
   id: string;
   kind: StepKind;
@@ -92,6 +92,7 @@ export function checkSteps(steps: Step[], dir: string | null): string[] {
 export function stepSummary(s: Step) {
   const opt = s.optional ? " (optional, asks first)" : "";
   switch (s.kind) {
+    case "watch_process": return `Watch ${s.match} (already running) and tell you when it finishes or stalls`;
     case "start_job": return `Start ${s.file}${s.expect_hours ? `, about ${s.expect_hours} h` : ""}, keep the PC awake and watch it${opt}`;
     case "stop_process": return `Close ${s.match} if it's running${opt}`;
     case "git_commit_push": return `Commit everything new (skipping key files and venv folders) and push to GitHub${opt}`;
@@ -170,14 +171,14 @@ export async function advance(id: string): Promise<void> {
       if (blocked) { if (r.status !== "waiting") await save(r, { status: "waiting", last_update: `Waiting on you: ${blocked.label}` }); return; }
       const next = list.find((s) => s.status === "todo");
       if (!next) {
-        const jobs = list.filter((s) => s.kind === "start_job" && s.status === "running");
+        const jobs = list.filter((s) => (s.kind === "start_job" || s.kind === "watch_process") && s.status === "running");
         const softWaiting = list.filter((s) => s.status === "waiting");
         if (jobs.length) { await save(r, { status: "running", last_update: `All steps done. Watching ${jobs.map((j) => j.file).join(", ")}.` }); return; }
         for (const s of softWaiting) { s.status = "skipped"; s.note = "Wasn't needed."; }
         const failed = list.filter((s) => s.status === "failed");
         await save(r, { status: failed.length ? "failed" : "done", finished_at: now(), last_update: failed.length ? `Finished, but ${failed.length} step${failed.length > 1 ? "s" : ""} didn't work: ${failed.map((f) => f.label).join("; ")}` : "All done." });
         await logRunbook(id, failed.length ? "Finished with problems." : "All done.");
-        void notify(failed.length ? `⚠️ **${r.title}** finished, but ${failed.map((f) => `"${f.label}"`).join(", ")} didn't work. Details are on the Supervise screen.` : `✅ **${r.title}** is done.`);
+        void notify(failed.length ? `⚠️ **${r.title}** finished, but ${failed.map((f) => `"${f.label}"`).join(", ")} didn't work. Details are on the Running screen.` : `✅ **${r.title}** is done.`);
         return;
       }
       await doStep(r, next);
@@ -212,6 +213,20 @@ async function doStep(r: Runbook, s: Step) {
   s.started_at = now();
   try {
     switch (s.kind) {
+      case "watch_process": {
+        const procs = (await allProcesses()) ?? [];
+        const m = (s.match ?? "").toLowerCase();
+        const hits = procs.filter((p) => p.cmd.toLowerCase().includes(m) && p.pid !== process.pid && !/get-ciminstance/i.test(p.cmd));
+        if (!hits.length) { s.status = "done"; s.note = "It isn't running (already finished, or not started yet)."; break; }
+        // follow the top-most one (the window), and the newest matching log if one was named
+        const top = hits.find((h) => /cmd\.exe|^sh$|bash/i.test(h.name)) ?? hits[0];
+        s.pid = top.pid; s.status = "running";
+        if (s.file && dir && inside(dir, s.file)) s.log = inside(dir, s.file)!;
+        s.started_at = top.started ?? s.started_at;
+        s.note = `Watching ${top.name} (started ${top.started ? new Date(top.started).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: "Australia/Melbourne" }) : "earlier"}). ${keepAwake(top.pid)}`;
+        await logRunbook(r.id, `Watching ${s.match}: ${top.cmd.slice(0, 160)}`);
+        return;
+      }
       case "start_job": {
         if (s.optional && (await needsOk(r, s, "This step is optional."))) return;
         const file = inside(dir, s.file!)!;
@@ -350,7 +365,7 @@ export const jobTail = tail;
 /** Watch running jobs: finished? quiet for too long? taking longer than usual? */
 async function watchJobs(r: Runbook) {
   let changed = false;
-  for (const s of r.steps.list.filter((x) => x.kind === "start_job" && x.status === "running")) {
+  for (const s of r.steps.list.filter((x) => (x.kind === "start_job" || x.kind === "watch_process") && x.status === "running")) {
     const started = new Date(s.started_at ?? now()).getTime();
     const hours = (Date.now() - started) / 3600_000;
     if (!alive(s.pid)) {
@@ -394,4 +409,14 @@ export async function runDueRunbooks() {
   const { data } = await db().from("runbooks").select("id,status").in("status", ["running", "waiting"]);
   for (const r of (data ?? []) as { id: string }[]) await advance(r.id);
   if ((data ?? []).length) ensureLoop();
+}
+
+/** Watch something Thomas started himself. Read-only (plus keeping the PC awake), so it starts straight away, no approval. */
+export async function watchJob(input: { project_id: string | null; work_dir: string | null; match: string; log?: string; expect_hours?: number; title?: string }) {
+  const step: Step = { id: "s1", kind: "watch_process", label: `Watch ${input.match}`, match: input.match, file: input.log, expect_hours: input.expect_hours, status: "todo" };
+  const { data: r } = await db().from("runbooks").insert({ project_id: input.project_id, title: input.title ?? `Watching ${input.match}`, work_dir: input.work_dir, steps: { list: [step] }, status: "running", started_at: now(), last_update: "Looking for it" }).select().single();
+  ensureLoop();
+  await advance(r.id);
+  const { data: after } = await db().from("runbooks").select("steps,last_update").eq("id", r.id).single();
+  return (after as Runbook).steps.list[0];
 }
