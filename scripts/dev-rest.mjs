@@ -25,15 +25,20 @@ async function openDb() {
   pool = { query: (sql, vals) => db.query(sql, vals) };
   // apply any migrations not yet applied, then seed a brand-new database
   await db.exec("create table if not exists _local_migrations (name text primary key, applied_at timestamptz default now())");
-  const done = new Set((await db.query("select name from _local_migrations")).rows.map((r) => r.name));
   const migDir = path.join(ROOT, "supabase", "migrations");
-  for (const f of fs.readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort()) {
-    if (done.has(f)) continue;
-    const sql = fs.readFileSync(path.join(migDir, f), "utf8").replace(/^create extension.*$/gim, "");
-    await db.exec(sql);
-    await db.query("insert into _local_migrations (name) values ($1)", [f]);
-    console.log("applied", f);
-  }
+  const migrate = async () => {
+    const done = new Set((await db.query("select name from _local_migrations")).rows.map((r) => r.name));
+    for (const f of fs.readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort()) {
+      if (done.has(f)) continue;
+      const sql = fs.readFileSync(path.join(migDir, f), "utf8").replace(/^create extension.*$/gim, "");
+      await db.exec(sql);
+      await db.query("insert into _local_migrations (name) values ($1)", [f]);
+      console.log("applied", f);
+    }
+  };
+  await migrate();
+  // after a `git pull` the new database changes apply by themselves, no restart needed
+  setInterval(() => { migrate().catch((e) => console.error("migration failed:", e.message)); }, 15_000).unref();
   if (fresh) {
     await db.exec(fs.readFileSync(path.join(ROOT, "supabase", "seed.sql"), "utf8"));
     console.log("seeded your projects");

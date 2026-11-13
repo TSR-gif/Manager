@@ -15,7 +15,30 @@ const SECRET = /(^|[\\/])\.env(\.|$)|secret|credential|\.pem$|\.key$|token/i;
 const LOGLIKE = /\.(log|out|err|txt|jsonl)$/i;
 const DATALIKE = /\.(csv|json|parquet|feather|pkl|db|sqlite|xlsx)$/i;
 
-interface Proc { pid: number; name: string; started: string | null; cmd: string }
+export interface Proc { pid: number; name: string; started: string | null; cmd: string; cwd?: string }
+
+/** Every program running on this PC with its command line (null if they can't be listed). */
+export async function allProcesses(): Promise<Proc[] | null> {
+  const list: Proc[] = [];
+  try {
+    if (process.platform === "win32") {
+      const ps = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | Select-Object ProcessId,Name,CommandLine,@{n='Started';e={if($_.CreationDate){$_.CreationDate.ToString('o')}}} | ConvertTo-Json -Compress";
+      const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { timeout: 20_000, maxBuffer: 16 << 20, windowsHide: true });
+      const rows = JSON.parse(stdout || "[]") as { ProcessId: number; Name: string; CommandLine: string; Started?: string }[];
+      for (const r of Array.isArray(rows) ? rows : [rows]) list.push({ pid: r.ProcessId, name: r.Name, started: r.Started ?? null, cmd: r.CommandLine });
+    } else {
+      const { stdout } = await run("ps", ["-eo", "pid=,lstart=,args="], { timeout: 10_000, maxBuffer: 8 << 20 });
+      for (const line of stdout.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/);
+        if (!m) continue;
+        let cwd = "";
+        try { cwd = fs.readlinkSync(`/proc/${m[1]}/cwd`).toLowerCase(); } catch { /* not ours */ }
+        list.push({ pid: Number(m[1]), name: m[3].split(/\s+/)[0], started: new Date(m[2]).toISOString(), cmd: m[3], cwd });
+      }
+    }
+  } catch { return null; }
+  return list;
+}
 
 async function processes(dir: string): Promise<Proc[]> {
   const top = new Set<string>();
@@ -27,24 +50,9 @@ async function processes(dir: string): Promise<Proc[]> {
     // `py backtest.py` started from inside the folder: the command line only has the script name
     return /\b(py|python\d*(\.exe)?|pythonw|node(\.exe)?|npm|npx)\b/.test(c) && [...top].some((f) => c.includes(f));
   };
-  const list: Proc[] = [];
-  try {
-    if (process.platform === "win32") {
-      const ps = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | Select-Object ProcessId,Name,CommandLine,@{n='Started';e={if($_.CreationDate){$_.CreationDate.ToString('o')}}} | ConvertTo-Json -Compress";
-      const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { timeout: 20_000, maxBuffer: 16 << 20, windowsHide: true });
-      const rows = JSON.parse(stdout || "[]") as { ProcessId: number; Name: string; CommandLine: string; Started?: string }[];
-      for (const r of Array.isArray(rows) ? rows : [rows]) if (mine(r.CommandLine)) list.push({ pid: r.ProcessId, name: r.Name, started: r.Started ?? null, cmd: r.CommandLine });
-    } else {
-      const { stdout } = await run("ps", ["-eo", "pid=,lstart=,args="], { timeout: 10_000, maxBuffer: 8 << 20 });
-      for (const line of stdout.split("\n")) {
-        const m = line.trim().match(/^(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/);
-        if (!m) continue;
-        let cwd = "";
-        try { cwd = fs.readlinkSync(`/proc/${m[1]}/cwd`).toLowerCase(); } catch { /* not ours */ }
-        if (mine(m[3]) || (cwd.startsWith(lowDir) && /\b(py|python|node|npm)/.test(m[3]))) list.push({ pid: Number(m[1]), name: m[3].split(/\s+/)[0], started: new Date(m[2]).toISOString(), cmd: m[3] });
-      }
-    }
-  } catch { /* can't list processes: say so below */ return [{ pid: -1, name: "", started: null, cmd: "" }]; }
+  const all = await allProcesses();
+  if (!all) return [{ pid: -1, name: "", started: null, cmd: "" }];
+  const list = all.filter((p) => mine(p.cmd) || (!!p.cwd && p.cwd.startsWith(lowDir) && /\b(py|python|node|npm)/.test(p.cmd)));
   return list.filter((p) => p.pid !== process.pid && !/check_project_activity|Get-CimInstance/.test(p.cmd)).slice(0, 15);
 }
 

@@ -169,3 +169,50 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 **12:40 — Installed on Thomas's PC** (Documents\MyManager). Node, Git and gh were already there, and the Claude CLI was installed with npm. MyManager calls `claude.cmd` so Windows' PowerShell block doesn't matter. Runs on the PC only for now: no Supabase or Vercel.
 
 **12:45 — New look**: three directions for Today (dark command centre, clean and bright, bold and colourful) in project files `manager/ui-directions/`, waiting for Thomas to pick.
+
+**13 Nov evening — Command centre look, coding help, project briefs**
+- The dark Command centre look now covers every screen (he picked it from three options).
+- **Project briefs**: MyManager reads each project's code (the folder on his PC first, then GitHub) and writes what it is, how it's built, how to run it, where it's at, known problems and what's next. It refreshes the brief when the code moves on and reads it before acting. The brief is on each project page, where he can correct it. **Your rules for this project** sit beside it and are never overwritten; Day trader starts with "pretend money only". Projects with no code are listed so he can describe them.
+
+**13 Nov night — Fixes from Thomas's screenshots**
+- "Couldn't find project": project names now match loosely, and if nothing matches it gets the real list. Errors show a red cross, not a green tick.
+- Stuck on "working…": a run stops after 5 quiet minutes or 20 minutes in total, and old runs that were cut off by a restart are marked as not finished.
+- It really checks projects: **check_project_activity** shows programs running from the folder, Windows scheduled tasks, files changed in the last 2 days, the end of the newest logs and the latest data rows.
+- No more "connect GitHub / the live-site link in Settings", and no setup tasks: it uses the folders, git and gh sign-in on his PC. The setup task it had created was ticked off.
+- Side questions (e.g. "switch to index investing") become one optional last line, never a blocker.
+- Empty project list after an update: database changes now apply by themselves within 15 s of a `git pull`, no restart needed.
+- "Yes, go ahead" only appears for real yes/no offers.
+
+**13 Nov night — Full read access to his PC, nothing destructive without his OK**
+- Thomas: "should have full access to my pc" + "make sure it doesn't do anything destructive without permission".
+- The assistant can read any folder in his user folder and run read-only commands (git status/log/diff, gh list/view, vercel whoami, tasklist…). It never asks to look.
+- **Safety guard** (`scripts/guard.mjs`), a hook on every Claude Code session MyManager starts. The app blocks the following, whatever the model decides:
+  - deleting or moving files;
+  - overwriting files git can't restore;
+  - git reset/clean/restore, force and normal pushes, deleting branches;
+  - uninstalling or installing software;
+  - closing programs; shutdown;
+  - registry, power, network and firewall settings;
+  - wiping databases; deleting things on GitHub, Vercel or Supabase;
+  - reading .env, key and password files.
+  
+  The chat assistant can't change files at all. The coder can only change files inside its project folder that git can bring back.
+- **find_services**: which project folders use Vercel, Supabase and so on, and whether the Vercel, Supabase and GitHub tools on the PC are signed in.
+
+**13 Nov night — Runbooks: step lists MyManager carries out on his PC**
+- Tell it a list ("start the Saturday job, close the queue, commit and push, delete the old venv, sign in to QuantConnect if asked"). It plans it as one list in Approvals. Nothing runs until he approves it.
+- Step types:
+  - **Start a job.** Runs in the background, keeps the PC awake until the job ends (no settings changed), watches the output, and messages him when it finishes, stalls 45 min, or runs 1.5× longer than usual.
+  - **Close a program.**
+  - **Commit and push.** Skips key files and venv folders, and stops if it sees secrets or files over 50 MB.
+  - **Delete a folder.** Asks again at that step.
+  - **Open a page.**
+  - **Hand over to you.** For sign-ins: it opens the page or a `vercel login` window and he types the password. "Only if needed" hand-overs don't hold things up.
+  - **Run a setup command.** Only git, gh, npm, npx, node, py, pip, vercel, supabase, claude or winget. Anything that isn't read-only asks again.
+- Shown under **On your PC** on the Supervise screen: live job output, Done / Not needed / Fixed it, try again, and Stop.
+- Tested on a copy of Day trader with his exact Saturday list:
+  - job started and finished;
+  - queue closed;
+  - commit stopped on a test key file, then went through after it was added to .gitignore (venv skipped);
+  - delete waited for approval, then removed the folder;
+  - sign-in hand-over skipped as not needed.

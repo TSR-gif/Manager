@@ -7,6 +7,7 @@ import readline from "node:readline";
 import { db } from "@/lib/db";
 import { sessionToken } from "@/lib/auth";
 import { liveRuns } from "@/lib/agent/live";
+import { guarded } from "@/lib/agent/guard";
 import { AGENT_TOOLS } from "./tools";
 import type { AgentEvent } from "./run";
 
@@ -67,8 +68,14 @@ export async function runClaudeCode(
       env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://localhost:${port}`, MANAGER_KEY: await sessionToken() },
     },
   };
-  const allowed = [...AGENT_TOOLS.map((t) => `mcp__manager__${t.name}`), "WebSearch", "WebFetch", "Skill"]; // Skill: the Anthropic skills Thomas installed (read-only guidance here)
-  const denied = ["Bash", "Edit", "Write", "NotebookEdit", "Task"];
+  // Thomas: "should have full access to my pc". It can read any folder and run read-only commands without asking.
+  // Changing things (starting jobs, committing, deleting, setup commands) goes through runbooks, which he approves.
+  // Secrets stay off-limits: .env, key, certificate and credential files are never read.
+  const allowed = [
+    ...AGENT_TOOLS.map((t) => `mcp__manager__${t.name}`), "WebSearch", "WebFetch", "Skill", "Read", "Glob", "Grep", "LS",
+    ...READ_ONLY_BASH.map((c) => `Bash(${c}:*)`),
+  ];
+  const denied = ["Edit", "Write", "NotebookEdit", "Task", ...SECRET_GLOBS.map((g) => `Read(${g})`)];
 
   // PC control only while Thomas has an approved "Use your PC" request (approved in the last 2 hours, not marked done).
   const pc = await activePcSession();
@@ -89,8 +96,12 @@ export async function runClaudeCode(
     "--allowedTools", allowed.join(","),
     "--disallowedTools", denied.join(","),
     "--append-system-prompt-file", writeTemp("manager-system.txt", system),
+    "--add-dir", os.homedir(), // his whole user folder (Documents, Desktop, projects) is readable
+
   ];
   if (ccSession) args.push("--resume", ccSession);
+  const guard = guarded(null, `chat-${id.slice(0, 8)}`); // read anywhere, change nothing: changes go through runbooks
+  args.push(...guard.args);
 
   const isWin = process.platform === "win32";
   const bin = process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"); // .cmd, not the PowerShell .ps1 that Windows often blocks
@@ -101,7 +112,7 @@ export async function runClaudeCode(
     try {
       // on Windows `claude` may be a .cmd shim, so go through the shell and quote paths with spaces
       const argv = isWin ? args.map((a) => (/[\s&()^]/.test(a) ? `"${a}"` : a)) : args;
-      child = spawn(bin, argv, { shell: isWin, cwd: os.tmpdir(), env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn(bin, argv, { shell: isWin, cwd: os.tmpdir(), env: guard.env, stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) {
       liveRuns.delete(id);
       send({ type: "error", message: `Couldn't start Claude Code: ${String(e)}` });
@@ -193,6 +204,16 @@ export async function runClaudeCode(
     });
   });
 }
+
+const SECRET_GLOBS = ["**/.env", "**/.env.*", "**/*.env", "**/*.pem", "**/*.key", "**/*secret*", "**/*credential*", "**/*_keys*", "**/.ssh/**", "**/.aws/**", "**/.supabase/access-token", "**/AppData/**/Login Data", "**/AppData/**/Cookies"];
+const READ_ONLY_BASH = [
+  "git status", "git log", "git diff", "git branch --list", "git branch -a", "git branch -v", "git remote -v", "git show",
+  "gh auth status", "gh repo list", "gh repo view", "gh pr list", "gh pr view", "gh run list", "gh run view", "gh issue list",
+  "npx vercel whoami", "npx vercel ls", "npx vercel project ls", "vercel whoami", "vercel ls", "vercel project ls",
+  "npx supabase projects list", "supabase projects list", "supabase --version",
+  "ls", "dir", "where", "which", "tasklist", "py --version", "python --version", "node --version", "npm --version", "pip list", "py -m pip list",
+];
+
 
 function writeTemp(name: string, content: string) {
   const p = path.join(os.tmpdir(), name);

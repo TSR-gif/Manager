@@ -83,6 +83,23 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
       return pushBranch(dir, branch);
     },
   },
+  // Runbooks: Thomas approves the whole list of PC steps; risky steps (deleting, setup commands) ask again. Never trustable.
+  "runbook.run": {
+    kind: "runbook.run", label: "Run steps on your PC", risk: "approval",
+    execute: async (a) => {
+      const { startRunbook } = await import("@/lib/runbooks");
+      return startRunbook((a.payload as { runbook_id: string }).runbook_id);
+    },
+  },
+  "runbook.step": {
+    kind: "runbook.step", label: "One risky step on your PC", risk: "approval",
+    execute: async (a) => {
+      const { runbook_id, step_id } = a.payload as { runbook_id: string; step_id: string };
+      const { resolveStep } = await import("@/lib/runbooks");
+      await resolveStep(runbook_id, step_id, "approved");
+      return { note: "Approved, carrying on" };
+    },
+  },
   // Ads are money: launching or raising a budget always asks and counts against the spend limits.
   "ads.launch": { kind: "ads.launch", label: "Launch an ad", risk: "approval" },
   "ads.budget": { kind: "ads.budget", label: "Change an ad budget", risk: "approval" },
@@ -91,7 +108,7 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
 };
 
 /** Hard rule: these always ask, whatever the trust ladder or autonomy setting says. */
-export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget", "mission.code", "code.push"];
+export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget", "mission.code", "code.push", "runbook.run", "runbook.step"];
 
 export function kindOf(kind: string): ActionKind {
   return ACTION_KINDS[kind] ?? ACTION_KINDS.other;

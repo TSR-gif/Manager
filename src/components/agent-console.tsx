@@ -40,6 +40,12 @@ function foldSteps(steps: Step[], finished: boolean): Step[] {
   return [...out, ...buf];
 }
 
+/** Only offer "Yes, go ahead" when the answer really ends with a yes/no offer ("Want me to…?", "Shall I…?"). */
+function yesNo(text: string) {
+  const last = text.trim().split(/(?<=[.!?])\s+/).pop() ?? "";
+  return /\?\s*$/.test(last) && /^(\*\*)?(want|shall|should|do you want|would you like|can i|could i|is it ok|ok to|happy for|are you happy|ready)\b/i.test(last.trim()) && !/\bor\b/i.test(last);
+}
+
 /** Answer first: the opening paragraph, with the rest behind "Show details" when it's long. */
 function splitAnswer(text: string): [string, string] {
   const t = text.trim();
@@ -190,7 +196,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                         <Md text={more} className="text-[14.5px] leading-relaxed" />
                       </details>
                     )}
-                    {i === lastDone && finished && /\?\s*$/.test(s.text) && (
+                    {i === lastDone && finished && yesNo(s.text) && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {["Yes, go ahead", "Not now"].map((q) => (
                           <button key={q} type="button" onClick={() => send(q)} className="btn !min-h-10 !px-4">{q}</button>

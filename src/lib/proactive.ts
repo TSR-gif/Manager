@@ -65,6 +65,7 @@ export async function tick(force?: "brief" | "checkin") {
   // recurring per-project jobs run on their own schedule, alongside the catch-up and check-ins
   if (!force) void import("@/lib/jobs").then((m) => m.runDueJobs()).catch(() => {});
   if (!force) void import("@/lib/missions").then((m) => m.runDueMissions()).catch(() => {});
+  if (!force) void import("@/lib/runbooks").then((m) => m.runDueRunbooks()).catch(() => {});
   // find project folders on this PC now and then (cheap: two levels under the usual places)
   // keep project briefs fresh: one project per pass, only when missing or the code has moved on
   if (!force) void import("@/lib/briefs").then((m) => m.refreshDueBriefs()).catch(() => {});

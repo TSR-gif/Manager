@@ -31,6 +31,42 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "draft_runbook",
+    description: `Plan a list of steps MyManager will carry out on Thomas's PC and watch, e.g. "start the Saturday job, close the queue, commit and push, delete the old venv", or setting up a service (sign-ins handed to him). It goes to Approvals as one list; nothing runs until he approves. Deleting folders and any command that isn't read-only ask him again at that step. Step kinds:
+- start_job: file (a .bat/.cmd/.py/.ps1 in the project folder), expect_hours. Runs it in the background, keeps the PC awake, watches its output, tells him when it finishes or stalls.
+- stop_process: match (e.g. "run_queue"): closes that program if it's running from the project.
+- git_commit_push: message. Commits everything new in the project folder (skips .env/key files and venv folders, stops if it sees secrets) and pushes the current branch.
+- delete_folder: path (inside the project folder).
+- open_link: url (https) opens it in his browser.
+- handoff: text (what he needs to do), optional url or command (a sign-in command like "vercel login" opened in a window for him), blocking (false = "only if needed"). Use this for anything that needs a password, 2FA, payment or a choice only he can make.
+- run_command: command (git, gh, npm, npx, node, py, pip, vercel, supabase, claude or winget only).
+Set optional: true for steps he called optional. Never put passwords or keys in steps.`,
+    input_schema: {
+      type: "object",
+      properties: {
+        project_name: { type: ["string", "null"] }, title: str,
+        steps: { type: "array", items: { type: "object", properties: {
+          kind: { type: "string", enum: ["start_job", "stop_process", "git_commit_push", "delete_folder", "open_link", "handoff", "run_command"] },
+          label: str, file: str, expect_hours: { type: "number" }, match: str, message: str, path: str, url: str, text: str, command: str,
+          blocking: { type: "boolean" }, optional: { type: "boolean" },
+        }, required: ["kind", "label"] } },
+      },
+      required: ["project_name", "title", "steps"],
+    },
+  },
+  {
+    name: "find_services",
+    description: "Look through Thomas's project folders on this PC (Documents, Desktop and the usual places; all already allowed, no need to ask him) and say which use Vercel, Supabase or other online services, plus whether the Vercel, Supabase and GitHub command-line tools on this PC are signed in. Read only; never reads .env or key files. Use it before planning any setup or connection work.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "runbook_status",
+    description: "See the runbooks on Thomas's PC: which are waiting for his OK, running (and what the long jobs last printed), waiting on him, or finished. Use it when he asks how a job or runbook is going.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "create_task",
     description: "Add a task. Use project_name for project work; null for an everyday/personal task (errands, calls, reminders). Keep titles short and action-first.",
     input_schema: {
@@ -289,7 +325,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
     switch (name) {
       case "get_overview": {
         const [projects, tasks, ideas, pending] = await Promise.all([
-          db().from("projects").select("id,name,kind,watch,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at,rules,brief_updated_at").order("priority"),
+          db().from("projects").select("*").order("priority"),
           db().from("tasks").select("id,title,status,priority,due,project_id").neq("status", "done").limit(200),
           db().from("ideas").select("id,text").eq("status", "inbox").limit(50),
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
@@ -310,7 +346,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const t = (tasks.data ?? []).map((x: Pick<Task, "id" | "title" | "status" | "priority" | "due" | "project_id">) => ({ ...x, project: x.project_id ? names.get(x.project_id) : "everyday", project_id: undefined }));
         return {
           label: "Read your projects and tasks",
-          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary,
+          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.error ? `Couldn't read projects: ${projects.error.message}` : (projects.data ?? []).map(({ brief, ...p }: Record<string, unknown>) => ({ ...p, brief_commit: undefined, has_brief: !!brief })), open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary,
             supervised_missions: (missionsQ.data ?? []).map((m: { project_id: string | null }) => ({ ...m, project: m.project_id ? names.get(m.project_id) : null })),
             done_last_7_days: (doneQ.data ?? []).map((d: { title: string; project_id: string | null }) => ({ title: d.title, project: d.project_id ? names.get(d.project_id) : "everyday" })) }),
         };
@@ -320,6 +356,28 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!p) return noProject(input.project_name);
         const { inspectProject } = await import("@/lib/inspect");
         return { label: `Looked into ${p.name}`, result: await inspectProject(p) };
+      }
+      case "draft_runbook": {
+        const p = input.project_name ? await findProject(input.project_name as string) : null;
+        if (input.project_name && !p) return noProject(input.project_name);
+        const dir = (p as { local_path?: string | null } | null)?.local_path ?? null;
+        const { draftRunbook } = await import("@/lib/runbooks");
+        const res = await draftRunbook({ project_id: p?.id ?? null, work_dir: dir, title: String(input.title), steps: (input.steps as never[]) ?? [] });
+        if (!res.ok) return { label: "Couldn't plan that runbook", result: `Not saved. Fix these and try again:\n${res.problems.join("\n")}`, isError: true };
+        return { label: `Planned “${input.title}”, waiting for your OK`, result: "Saved. It's in Approvals as one list; nothing runs until Thomas approves. Deleting and setup commands ask again at that step. Progress shows on the Supervise screen and comes to Telegram." };
+      }
+      case "find_services": {
+        const { findServices } = await import("@/lib/services");
+        return { label: "Looked through your project folders and sign-ins", result: await findServices() };
+      }
+      case "runbook_status": {
+        const { data } = await db().from("runbooks").select("*").order("created_at", { ascending: false }).limit(8);
+        const { jobTail } = await import("@/lib/runbooks");
+        const rows = ((data ?? []) as import("@/lib/runbooks").Runbook[]).map((r) => ({
+          title: r.title, status: r.status, update: r.last_update, started: r.started_at, finished: r.finished_at,
+          steps: r.steps.list.map((s) => ({ label: s.label, status: s.status, note: s.note, ...(s.kind === "start_job" && s.status === "running" ? { last_output: jobTail(s.log, 4) } : {}) })),
+        }));
+        return { label: "Checked your runbooks", result: JSON.stringify(rows) };
       }
       case "check_project_activity": {
         let p = await findProject(input.project_name as string);

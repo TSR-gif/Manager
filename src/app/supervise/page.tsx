@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { getProjects, getSettings } from "@/lib/queries";
 import { Empty, ProjectAvatar, ago } from "@/components/ui";
 import type { Mission, MissionLog } from "@/lib/missions";
+import { RunbookCard } from "@/components/runbook-card";
+import { jobTail, type Runbook } from "@/lib/runbooks";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,10 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
     db().from("mission_log").select("*").order("created_at", { ascending: false }).limit(400),
     db().from("actions").select("payload,status").eq("kind", "mission.code").eq("status", "pending"),
   ]);
+  const { data: rbData } = await db().from("runbooks").select("*").order("created_at", { ascending: false }).limit(12);
+  const runbooks = ((rbData ?? []) as Runbook[]).filter((r) => !project || r.project_id === project)
+    .filter((r) => ["queued", "running", "waiting"].includes(r.status) || Date.now() - new Date(r.finished_at ?? r.created_at).getTime() < 3 * 86_400_000);
+  const tails = Object.fromEntries(runbooks.flatMap((r) => r.steps.list.filter((s) => s.kind === "start_job" && s.status === "running").map((s) => [s.id, jobTail(s.log, 6)])));
   const name = (settings as { assistant_name?: string }).assistant_name || "MyManager";
   const all = ((mq.data ?? []) as Mission[]).filter((m) => !project || m.project_id === project);
   const steps = ((sq.data ?? []) as Step[]).filter((s) => s.mission_id);
@@ -120,7 +126,14 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
         <p className="mt-1 text-[14px] text-muted">Tell {name} what a project is doing. It keeps checking until it&apos;s finished, ticks off the steps, and messages you when it needs you.</p>
       </header>
 
-      {all.length === 0 && (
+      {runbooks.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="kicker !text-muted">On your PC</h2>
+          <ul className="space-y-3">{runbooks.map((r) => <RunbookCard key={r.id} r={r} project={r.project_id ? (projects.find((p) => p.id === r.project_id)?.name ?? "Project") : "Your PC"} tails={tails} />)}</ul>
+        </section>
+      )}
+
+      {all.length === 0 && runbooks.length === 0 && (
         <div className="card space-y-3">
           <Empty icon={<Bot size={18} />} title="Nothing being supervised" hint={`Try telling ${name}: "Day trader is doing the backtest fix and the README, make sure it gets finished."`} />
           <div className="flex justify-center"><Link className="btn btn-sm" href={`/agent?ask=${encodeURIComponent("Day trader is doing ")}`}>Tell {name}</Link></div>

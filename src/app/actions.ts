@@ -233,6 +233,12 @@ export async function decideAction(id: string, approve: boolean) {
   if (!approve) {
     await db().from("actions").update({ status: "rejected", decided_at: now }).eq("id", id);
     await syncCampaign(a, "rejected");
+    if (a.kind === "runbook.step" || a.kind === "runbook.run") {
+      const rb = await import("@/lib/runbooks");
+      const p = a.payload as { runbook_id: string; step_id?: string };
+      if (a.kind === "runbook.step" && p.step_id) await rb.resolveStep(p.runbook_id, p.step_id, "rejected");
+      else await db().from("runbooks").update({ status: "stopped", last_update: "You said no, so nothing ran." }).eq("id", p.runbook_id);
+    }
     refresh();
     return;
   }
@@ -706,4 +712,21 @@ export async function studyNow(form: FormData) {
   if (!p) return;
   const { studyGoal } = await import("@/lib/briefs");
   redirect(`/agent?ask=${encodeURIComponent(studyGoal(p))}`);
+}
+
+// ---------- runbooks ----------
+export async function runbookStepDone(form: FormData) {
+  const id = str(form, "id"), step = str(form, "step");
+  if (!id || !step) return;
+  const { resolveStep } = await import("@/lib/runbooks");
+  await resolveStep(id, step, str(form, "outcome") === "skipped" ? "skipped" : "done");
+  refresh();
+}
+
+export async function runbookStop(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const { stopRunbook } = await import("@/lib/runbooks");
+  await stopRunbook(id);
+  refresh();
 }
