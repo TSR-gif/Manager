@@ -175,6 +175,7 @@ export async function advance(id: string): Promise<void> {
         const failed = list.filter((s) => s.status === "failed");
         await save(r, { status: failed.length ? "failed" : "done", finished_at: now(), last_update: failed.length ? `Finished, but ${failed.length} step${failed.length > 1 ? "s" : ""} didn't work: ${failed.map((f) => f.label).join("; ")}` : "All done." });
         await logRunbook(id, failed.length ? "Finished with problems." : "All done.");
+        void import("@/lib/missions").then((m) => m.wakeHelpers("runbook_finished", `${r.title}: ${failed.length ? "finished with problems" : "all done"}`, r.project_id)).catch(() => {});
         void notify(failed.length ? `⚠️ **${r.title}** finished, but ${failed.map((f) => `"${f.label}"`).join(", ")} didn't work. Details are on the Running screen.` : `✅ **${r.title}** is done.`);
         return;
       }
@@ -380,6 +381,7 @@ async function watchJobs(r: Runbook) {
       s.note = `${bad ? "Stopped with a problem" : "Finished"} after ${hours < 1 ? `${Math.round(hours * 60)} min` : `${hours.toFixed(1)} h`}.${last ? ` Last lines: ${last.replace(/\n/g, " / ").slice(0, 300)}` : ""}`;
       await logRunbook(r.id, `${s.file}: ${s.note}`);
       void notify(`${bad ? "⚠️" : "✅"} **${s.file}** ${s.note}`);
+      void import("@/lib/missions").then((m) => m.wakeHelpers("job_finished", `${s.file}: ${s.note}`, r.project_id)).catch(() => {});
       changed = true;
       continue;
     }

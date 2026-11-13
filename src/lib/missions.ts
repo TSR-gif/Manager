@@ -17,6 +17,7 @@ export interface Mission {
   last_check_at: string | null; checks: number; work_dir: string | null; can_code: boolean; worker: "idle" | "working";
   created_at: string; finished_at: string | null;
   done_check?: string | null; rounds?: number; max_rounds?: number; worktree?: string | null;
+  ongoing?: boolean; wake_on?: string[];
 }
 export interface MissionLog { id: string; mission_id: string; kind: string; text: string; created_at: string }
 
@@ -53,6 +54,7 @@ export async function missionPrompt(m: Mission, answer?: string) {
     : m.work_dir
       ? "Coding steps need Thomas's OK first (he hasn't approved it for this mission). Don't ask again if a request is already waiting."
       : "You can't change the code yourself on this mission. For coding work, write the step clearly so Thomas (or a Claude session he starts) can do it.";
+  if (m.ongoing) return helperPrompt(m, name, know, logLines, answer);
   return `Supervising mission ${m.id} for ${name ?? "an everyday goal"}. Thomas said: "${m.goal}". He wants this seen through to the end. This is check number ${m.checks + 1}; he isn't watching right now.
 ${answer ? `\nTHOMAS JUST ANSWERED YOUR QUESTION ("${m.question ?? ""}"): ${answer}\nAct on his answer first.\n` : ""}
 ${know}
@@ -74,6 +76,36 @@ What to do now:
 Never spend money, sign up, post, push code or deploy. Anything like that goes through request_approval.`;
 }
 
+/** Events a helper can wake on, besides its schedule. */
+export const HELPER_EVENTS = ["approval_decided", "runbook_finished", "job_finished", "mission_finished"] as const;
+
+/** The always-on helper's turn: it owns a responsibility, so there's no "done", and it stays quiet unless it matters. */
+function helperPrompt(m: Mission, name: string | null | undefined, know: string, logLines: string, answer?: string) {
+  return `You are Thomas's always-on helper ${m.id} for ${name ?? "his everyday life"}. Your standing job, in his words: "${m.goal}".
+You work in the background; he isn't watching. This is wake-up number ${m.checks + 1}. You wake every ${Math.round(m.check_every_minutes / 60 * 10) / 10} hour(s)${m.wake_on?.length ? ` and when any of these happen: ${m.wake_on.join(", ")}` : ""}. The newest "event" lines in the history say why you woke now, if it wasn't the schedule.
+${answer ? `\nTHOMAS JUST ANSWERED YOUR QUESTION ("${m.question ?? ""}"): ${answer}\nAct on his answer first.\n` : ""}
+${know}
+Recent history (yours):
+${logLines}
+
+What to do now:
+1. Look at what changed since your last wake-up${name ? ` (inspect_project("${name}"), check_project_activity)` : ""} and anything your job covers. Check things yourself before asking him anything.
+2. Do what your job needs within his rules: tasks, notes, runbook drafts, coding steps if allowed. Anything that spends money, signs up, posts, sends email as him, pushes code, deletes or changes settings goes through request_approval or a runbook he approves. Never do those directly.
+3. Only interrupt him for two things: a decision only he can make (ask_thomas, one short question) or a result worth knowing (tell_thomas, one or two plain lines). Most wake-ups should send him nothing.
+4. Always finish with mission_update: one plain line on where things stand. Keep status "running"; helpers don't finish, he stops them.`;
+}
+
+/** Something happened that helpers may care about: wake the ones that asked for it (and that cover this project). */
+export async function wakeHelpers(event: (typeof HELPER_EVENTS)[number], text: string, projectId?: string | null) {
+  const { data } = await db().from("missions").select("id,project_id,wake_on,worker").eq("status", "running").eq("ongoing", true);
+  const hit = ((data ?? []) as Pick<Mission, "id" | "project_id" | "wake_on" | "worker">[])
+    .filter((h) => (h.wake_on ?? []).includes(event) && (!h.project_id || !projectId || h.project_id === projectId));
+  for (const h of hit) {
+    await logMission(h.id, "event", `${event}: ${text.slice(0, 300)}`);
+    if (h.worker !== "working") void checkMission(h.id).catch(() => {});
+  }
+}
+
 /** One supervisor pass over a mission. */
 export async function checkMission(id: string, answer?: string) {
   if (checking.has(id)) return null;
@@ -89,7 +121,7 @@ export async function checkMission(id: string, answer?: string) {
       next_check_at: new Date(now.getTime() + m.check_every_minutes * 60_000).toISOString(),
       ...(answer ? { status: "running", question: null } : {}),
     }).eq("id", id);
-    if (m.checks + 1 >= MAX_CHECKS) {
+    if (!m.ongoing && m.checks + 1 >= MAX_CHECKS) {
       await db().from("missions").update({ status: "waiting", question: "I've checked on this a lot without finishing. Keep going, change the plan, or stop?" }).eq("id", id);
       return null;
     }
@@ -109,10 +141,11 @@ export async function runDueMissions() {
   if (busy) return [];
   busy = true;
   try {
-    const { data } = await db().from("missions").select("id,next_check_at,worker").eq("status", "running");
-    const due = ((data ?? []) as Pick<Mission, "id" | "next_check_at" | "worker">[])
+    const { data } = await db().from("missions").select("id,next_check_at,worker,done_check,can_code").eq("status", "running");
+    const due = ((data ?? []) as Pick<Mission, "id" | "next_check_at" | "worker" | "done_check" | "can_code">[])
       .filter((m) => m.worker !== "working" && (!m.next_check_at || new Date(m.next_check_at).getTime() <= Date.now()));
-    for (const m of due) await checkMission(m.id);
+    const { loopRound } = await import("@/lib/loops");
+    for (const m of due) await (m.done_check && m.can_code ? loopRound(m.id) : checkMission(m.id));
     return due.map((m) => m.id);
   } finally {
     busy = false;
@@ -121,9 +154,17 @@ export async function runDueMissions() {
 
 /** Thomas answered a mission's question (in the app, on Telegram, or by telling the assistant). */
 export async function answerMission(id: string, text: string) {
-  const { data } = await db().from("missions").select("id,question,status").eq("id", id).maybeSingle();
+  const { data } = await db().from("missions").select("id,question,status,done_check,can_code").eq("id", id).maybeSingle();
   if (!data) return false;
   await logMission(id, "answer", text);
+  if (data.done_check && data.can_code) {
+    // A loop: "stop" ends it; anything else is a fresh set of rounds with his answer passed to the coder.
+    if (/^\s*(stop|cancel|leave it|no)\b/i.test(text)) { await finishMission(id, "stopped"); return true; }
+    await db().from("missions").update({ status: "running", question: null, rounds: 0 }).eq("id", id);
+    const { loopRound } = await import("@/lib/loops");
+    void loopRound(id, text).catch(() => {});
+    return true;
+  }
   void checkMission(id, text).catch(() => {});
   return true;
 }
@@ -146,6 +187,7 @@ export async function finishMission(id: string, status: "done" | "stopped") {
     const { data: m } = await db().from("missions").select("goal,project_id").eq("id", id).maybeSingle();
     const name = await projectName(m?.project_id ?? null);
     await notify(`✅ **${name ?? "Mission"} finished**\n${m?.goal ?? ""}`).catch(() => false);
+    void wakeHelpers("mission_finished", m?.goal ?? "", m?.project_id).catch(() => {});
   }
 }
 
@@ -168,7 +210,14 @@ export async function startCodingStep(id: string, instructions: string): Promise
   await db().from("missions").update({ worker: "working" }).eq("id", id);
   await logMission(id, "work", `Started: ${instructions}`);
   const branch = `mymanager/${shortId(id)}`;
-  const { data: pr } = m.project_id ? await db().from("projects").select("rules").eq("id", m.project_id).maybeSingle() : { data: null };
+  // Its own working copy of the project, so two jobs (or Thomas himself) can work on the same project at once.
+  const { ensureWorktree } = await import("@/lib/loops");
+  const wt = await ensureWorktree(m).catch(() => ({ dir: m.work_dir as string, note: undefined as string | undefined }));
+  if (wt.note && !m.worktree) await logMission(id, "note", wt.note);
+  const dir = wt.dir;
+  const { data: pr } = m.project_id ? await db().from("projects").select("id,name,local_path,brief,rules,lessons,goal").eq("id", m.project_id).maybeSingle() : { data: null };
+  const { notesText } = await import("@/lib/project-notes");
+  const notes = pr ? notesText(pr).replace(/^---[\s\S]*?---\s*/, "").replace(/<!--[\s\S]*?-->\s*/, "").trim().slice(0, 6000) : "";
   const prompt = `You are doing one step of a bigger job for Thomas, supervised by his MyManager app.
 The job: ${m.goal}
 This step: ${instructions}
@@ -176,33 +225,39 @@ This step: ${instructions}
 Rules:
 - Work on the git branch "${branch}" (create it from the current branch if it doesn't exist). Commit when the step works, with a clear message. Never push, never deploy, never merge into main.
 - Don't touch secrets, .env files, API keys or anything with real money (trading stays on pretend money).${pr?.rules ? `\n- Thomas's rules for this project, always follow them: ${pr.rules}` : ""}
-- Keep the change small and focused on this step. Run the tests if there are any.
+- Keep the change small and focused on this step. Run the tests if there are any.${notes ? `\n\nWhat MyManager knows about this project:\n${notes}` : ""}
 - If you need a decision or something only Thomas can give, stop and ask it.
 End your reply with exactly one line, either "RESULT: done - <one line on what changed>" or "RESULT: stuck - <the one question for Thomas>".`;
   const isWin = process.platform === "win32";
   const { guarded } = await import("@/lib/agent/guard");
-  const guard = guarded(m.work_dir, `code-${shortId(id)}`); // the app blocks anything destructive, whatever the model does
+  const guard = guarded(dir, `code-${shortId(id)}`); // the app blocks anything destructive, whatever the model does
   const args = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", CODER_TOOLS.join(","), "--disallowedTools", CODER_DENY.join(","), ...guard.args];
   const argv = isWin ? args.map((a) => (/[\s&()^|<>]/.test(a) ? `"${a}"` : a)) : args;
-  const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: m.work_dir, shell: isWin, env: guard.env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: dir, shell: isWin, env: guard.env, stdio: ["pipe", "pipe", "pipe"] });
   let out = "", err = "";
   child.stdout.on("data", (d) => { out += d.toString(); });
   child.stderr.on("data", (d) => { err += d.toString(); });
   child.stdin.write(prompt);
   child.stdin.end();
   const timer = setTimeout(() => child.kill(), 45 * 60_000);
-  const finish = async (text: string) => {
+  const finish = async (text: string, stuck?: string) => {
     clearTimeout(timer);
     await db().from("missions").update({ worker: "idle", next_check_at: new Date().toISOString() }).eq("id", id);
     await logMission(id, "work", text);
-    void checkMission(id).catch(() => {});
+    if (m.done_check) {
+      // A loop: the check decides what happens next, not a model. If the coder is stuck, ask Thomas.
+      if (stuck) { await askThomas(id, stuck); return; }
+      const { loopRound } = await import("@/lib/loops");
+      void loopRound(id).catch(() => {});
+    } else void checkMission(id).catch(() => {});
   };
   child.on("error", (e) => { void finish(`The coder couldn't start: ${e.message}`); });
   child.on("close", (code) => {
     let result = "";
     try { result = String(JSON.parse(out).result ?? ""); } catch { result = out.slice(-1500); }
     const line = result.match(/RESULT:\s*(done|stuck)\s*[-–:]\s*(.+)/i);
-    void finish(line ? `${line[1].toLowerCase() === "done" ? "Done" : "Stuck"}: ${line[2].trim()}` : code === 0 ? result.slice(-800) || "Finished the step." : `The coder stopped (${code}). ${err.slice(-400)}`);
+    const stuck = line && line[1].toLowerCase() === "stuck" ? line[2].trim() : undefined;
+    void finish(line ? `${stuck ? "Stuck" : "Done"}: ${line[2].trim()}` : code === 0 ? result.slice(-800) || "Finished the step." : `The coder stopped (${code}). ${err.slice(-400)}`, stuck);
   });
   return `Started the coder on: ${instructions}. It works on the branch ${branch} and reports back when finished; the mission is checked again then.`;
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { notify } from "@/lib/notify";
 import type Anthropic from "@anthropic-ai/sdk";
 import { db, unwrap } from "@/lib/db";
 import { getMoney } from "@/lib/up";
@@ -224,7 +225,7 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
   },
   {
     name: "supervise_project",
-    description: "Start supervising work on a project until it's finished. Use when Thomas says something like \"Day trader is doing X, Y and Z, make sure it gets finished\". Breaks it into steps (tasks), then MyManager checks on it regularly on its own, ticks off steps that are really done, and asks Thomas when it needs him (in the app and on his phone). work_dir is the project's folder on his PC if he wants MyManager to do the coding steps itself (that needs his OK once, which this asks for); otherwise null.",
+    description: "Start supervising work on a project until it's finished. Use when Thomas says something like \"Day trader is doing X, Y and Z, make sure it gets finished\". Breaks it into steps (tasks), then MyManager checks on it regularly on its own, ticks off steps that are really done, and asks Thomas when it needs him (in the app and on his phone). work_dir is the project's folder on his PC if he wants MyManager to do the coding steps itself (that needs his OK once, which this asks for); otherwise null. done_check makes it a loop: a test/type-check/lint/build command (like \"npm test\" or \"py -m pytest\") that must pass. MyManager then codes, runs the check, fixes failures, has a second read-only reviewer look at the change, and repeats until it passes and is approved (max_rounds goes, default 6) before telling Thomas the branch is ready. Use it when Thomas says things like \"keep going until the tests pass\". Otherwise null.",
     input_schema: {
       type: "object",
       properties: {
@@ -232,8 +233,10 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
         steps: { type: "array", items: str },
         check_every_hours: { type: "number" },
         work_dir: nstr,
+        done_check: nstr,
+        max_rounds: { type: ["number", "null"] },
       },
-      required: ["project_name", "goal", "steps", "check_every_hours", "work_dir"],
+      required: ["project_name", "goal", "steps", "check_every_hours", "work_dir", "done_check", "max_rounds"],
       additionalProperties: false,
     },
     strict: true,
@@ -272,6 +275,32 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
     name: "answer_mission",
     description: "Pass Thomas's answer to a supervised mission that is waiting on him (when he answers in chat). Use the mission id from get_overview's missions list. The mission carries on straight away.",
     input_schema: { type: "object", properties: { mission_id: str, answer: str }, required: ["mission_id", "answer"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "start_helper",
+    description: "Start an always-on helper: it owns an ongoing responsibility (not a job with an end), works in the background, and only comes back to Thomas for a decision or a result worth knowing. Use when he hands something over for good, e.g. \"keep an eye on Bargie's launch\", \"make sure my Saturday Day trader run goes OK every week\", \"look after my bills\". project_name null for an everyday helper. It wakes every check_every_hours, and also when any wake_on event happens: approval_decided (he approves or turns something down), runbook_finished, job_finished (a job on his PC ends), mission_finished. It runs while MyManager is running on his PC.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_name: nstr, responsibility: str, check_every_hours: { type: "number" },
+        wake_on: { type: "array", items: { type: "string", enum: ["approval_decided", "runbook_finished", "job_finished", "mission_finished"] } },
+      },
+      required: ["project_name", "responsibility", "check_every_hours", "wake_on"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "tell_thomas",
+    description: "An always-on helper tells Thomas a result worth knowing, in one or two plain lines (sent in the app and on his phone). Not for routine progress: most wake-ups should send nothing. For a question, use ask_thomas.",
+    input_schema: { type: "object", properties: { mission_id: str, message: str }, required: ["mission_id", "message"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "stop_mission",
+    description: "Stop a supervised mission or always-on helper. Only when Thomas asks you to stop it.",
+    input_schema: { type: "object", properties: { mission_id: str }, required: ["mission_id"], additionalProperties: false },
     strict: true,
   },
   {
@@ -337,7 +366,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
         ]);
         const [missionsQ, doneQ] = await Promise.all([
-          db().from("missions").select("id,project_id,goal,status,question,last_update,worker,last_check_at").in("status", ["running", "waiting"]),
+          db().from("missions").select("id,project_id,goal,status,question,last_update,worker,last_check_at,ongoing,done_check,rounds").in("status", ["running", "waiting"]),
           db().from("tasks").select("title,project_id,done_at").eq("status", "done").gte("done_at", new Date(Date.now() - 7 * 86_400_000).toISOString()).limit(200),
         ]);
         const money = await getMoney();
@@ -519,6 +548,8 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const p = await findProject(input.project_name as string);
         if (!p) return noProject(input.project_name);
         await db().from("projects").update({ brief: String(input.brief).slice(0, 12000), brief_updated_at: new Date().toISOString(), brief_edited_by_you: false }).eq("id", p.id);
+        const { writeNotes } = await import("@/lib/project-notes");
+        await writeNotes(p.id).catch(() => "");
         return { label: `Updated the ${p.name} brief`, result: "Saved. It shows on the project page." };
       }
       case "supervise_project": {
@@ -526,7 +557,14 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!p) return noProject(input.project_name);
         const hours = Math.max(0.25, Math.min(24, Number(input.check_every_hours) || 1));
         const workDir = (input.work_dir as string | null) || (p as { local_path?: string | null }).local_path || null;
+        const doneCheck = String(input.done_check ?? "").trim() || null;
+        if (doneCheck) {
+          const { isSafeCheck } = await import("@/lib/loops");
+          if (!isSafeCheck(doneCheck)) return { label: "Check not allowed", result: `"${doneCheck}" isn't a check MyManager will run over and over. Use a test, type-check, lint or build command (npm test, npx tsc --noEmit, py -m pytest...).`, isError: true };
+          if (!workDir) return { label: "No folder", result: "A loop needs the project's folder on Thomas's PC. Ask him where it is, or save it on the project.", isError: true };
+        }
         const [m] = unwrap(await db().from("missions").insert({
+          done_check: doneCheck, max_rounds: Math.max(1, Math.min(12, Math.round(Number(input.max_rounds) || 6))),
           project_id: p.id, goal: input.goal, check_every_minutes: Math.round(hours * 60), work_dir: workDir,
           next_check_at: new Date(Date.now() + 60_000).toISOString(),
         }).select());
@@ -553,15 +591,47 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         await db().from("tasks").insert({ title: String(input.title).slice(0, 200), project_id: m.project_id, mission_id: input.mission_id, priority: 2 });
         return { label: `Added step: ${input.title}`, result: "Added." };
       }
+      case "start_helper": {
+        const p = input.project_name ? await findProject(input.project_name as string) : null;
+        if (input.project_name && !p) return noProject(input.project_name);
+        const hours = Math.max(0.25, Math.min(24 * 7, Number(input.check_every_hours) || 6));
+        const wake = ((input.wake_on as string[]) ?? []).filter((e) => ["approval_decided", "runbook_finished", "job_finished", "mission_finished"].includes(e));
+        const [h] = unwrap(await db().from("missions").insert({
+          project_id: p?.id ?? null, goal: String(input.responsibility).slice(0, 600), ongoing: true, wake_on: wake,
+          check_every_minutes: Math.round(hours * 60), next_check_at: new Date(Date.now() + 60_000).toISOString(),
+          work_dir: (p as { local_path?: string | null } | null)?.local_path ?? null,
+        }).select());
+        const { logMission } = await import("@/lib/missions");
+        await logMission(h.id, "note", `Helper started: ${input.responsibility}`);
+        await did(`Started a helper${p ? ` for ${p.name}` : ""}: ${String(input.responsibility).slice(0, 60)}`, { op: "update", table: "missions", id: h.id, values: { status: "stopped" } });
+        return { label: `Helper started${p ? ` for ${p.name}` : ""}`, result: `Helper ${h.id} is on. First look in about a minute, then every ${hours} hour(s)${wake.length ? `, and when: ${wake.join(", ")}` : ""}. It only messages Thomas for a decision or a result worth knowing.` };
+      }
+      case "tell_thomas": {
+        const { data: m } = await db().from("missions").select("id,project_id").eq("id", input.mission_id).maybeSingle();
+        if (!m) return { label: "No such helper", result: "Mission not found.", isError: true };
+        const { logMission } = await import("@/lib/missions");
+        const msg = String(input.message).slice(0, 600);
+        await logMission(m.id, "told", msg);
+        const { data: pj } = m.project_id ? await db().from("projects").select("name").eq("id", m.project_id).maybeSingle() : { data: null };
+        await notify(`💡 **${pj?.name ?? "MyManager"}**\n${msg}`).catch(() => false);
+        return { label: "Told Thomas", result: "Sent." };
+      }
+      case "stop_mission": {
+        const { data: m } = await db().from("missions").select("id,goal").eq("id", input.mission_id).maybeSingle();
+        if (!m) return { label: "No such mission", result: "Mission not found.", isError: true };
+        const { finishMission } = await import("@/lib/missions");
+        await finishMission(m.id, "stopped");
+        return { label: `Stopped: ${String(m.goal).slice(0, 60)}`, result: "Stopped." };
+      }
       case "mission_update": {
-        const { data: m } = await db().from("missions").select("id").eq("id", input.mission_id).maybeSingle();
+        const { data: m } = await db().from("missions").select("id,ongoing").eq("id", input.mission_id).maybeSingle();
         if (!m) return { label: "No such mission", result: "Mission not found.", isError: true };
         await db().from("missions").update({ last_update: String(input.update).slice(0, 400) }).eq("id", input.mission_id);
-        if (input.status === "done") {
+        if (input.status === "done" && !m.ongoing) {
           const { finishMission } = await import("@/lib/missions");
           await finishMission(input.mission_id as string, "done");
         }
-        return { label: input.status === "done" ? "Mission finished" : "Noted where it's at", result: "Saved." };
+        return { label: input.status === "done" && !m.ongoing ? "Mission finished" : "Noted where it's at", result: m.ongoing && input.status === "done" ? "Saved. Helpers keep going until Thomas stops them." : "Saved." };
       }
       case "ask_thomas": {
         const { askThomas } = await import("@/lib/missions");

@@ -685,6 +685,7 @@ export async function saveBrief(form: FormData) {
   const id = str(form, "id");
   if (!id) return;
   await db().from("projects").update({ brief: str(form, "brief"), brief_updated_at: new Date().toISOString(), brief_edited_by_you: true }).eq("id", id);
+  await (await import("@/lib/project-notes")).writeNotes(id).catch(() => "");
   refresh();
 }
 
@@ -693,6 +694,7 @@ export async function saveRules(form: FormData) {
   const id = str(form, "id");
   if (!id) return;
   await db().from("projects").update({ rules: str(form, "rules") }).eq("id", id);
+  await (await import("@/lib/project-notes")).writeNotes(id).catch(() => "");
   refresh();
 }
 

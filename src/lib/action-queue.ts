@@ -101,6 +101,7 @@ export async function decideAction(id: string, approve: boolean) {
       else await db().from("runbooks").update({ status: "stopped", last_update: "You said no, so nothing ran." }).eq("id", p.runbook_id);
     }
     refresh();
+    void helpersHear(`Turned down: ${a.title}`, a.project_id);
     return;
   }
   // Check the spend caps again right before paying: other spending may have happened since it was asked.
@@ -111,4 +112,8 @@ export async function decideAction(id: string, approve: boolean) {
     return;
   }
   await execute({ ...a, decided_at: now });
+  void helpersHear(`Approved: ${a.title}`, a.project_id);
 }
+
+const helpersHear = (text: string, projectId: string | null) =>
+  import("@/lib/missions").then((m) => m.wakeHelpers("approval_decided", text, projectId)).catch(() => {});
