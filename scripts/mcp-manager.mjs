@@ -2,7 +2,7 @@
 // Started automatically by Manager when AGENT_BACKEND=claude-code. Needs MANAGER_URL and MANAGER_KEY.
 import readline from "node:readline";
 
-const URL_BASE = process.env.MANAGER_URL ?? "http://localhost:3000";
+const URL_BASE = process.env.MANAGER_URL ?? "http://127.0.0.1:3000";
 const KEY = process.env.MANAGER_KEY ?? "";
 const headers = { "Content-Type": "application/json", "x-manager-key": KEY };
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");

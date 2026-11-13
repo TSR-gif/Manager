@@ -6,7 +6,7 @@ import path from "node:path";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API = process.env.TELEGRAM_API ?? "https://api.telegram.org"; // overridable for tests
-const BASE = process.env.MANAGER_URL ?? "http://localhost:3000";
+const BASE = process.env.MANAGER_URL ?? "http://127.0.0.1:3000";
 const KEY = process.env.MANAGER_KEY ?? "";
 // Telegram only accepts public https links on buttons, so links are shown only when the app is online.
 const PUBLIC = /^https:\/\//.test(process.env.APP_URL ?? "") ? process.env.APP_URL.replace(/\/$/, "") : null;
@@ -33,7 +33,6 @@ let state = { notified: [], offset: 0, runId: null };
 try { state = { ...state, ...JSON.parse(fs.readFileSync(STATE, "utf8")) }; } catch {}
 const save = () => { try { fs.mkdirSync(path.dirname(STATE), { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(state)); } catch {} };
 
-const pairCode = KEY.slice(0, 8).toUpperCase();
 let chatId = null;
 const money = (c) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]);
@@ -89,9 +88,9 @@ async function onMessage(m) {
   if (text.startsWith("/start")) {
     const code = text.split(/\s+/)[1]?.toUpperCase();
     if (chatId && from !== chatId) return; // already paired with another chat: unpair in Manager first
-    if (code === pairCode) {
+    const ok = code ? (await mgr("pair", { chat_id: from, code }).catch(() => ({ ok: false }))).ok : false;
+    if (ok) {
       chatId = from;
-      await mgr("pair", { chat_id: from });
       await tg("sendMessage", { chat_id: from, text: "Paired ✅ I'll send approvals here.\n\nJust type to ask me anything.\n<b>+ text</b> quick-adds a task (<b>+ #punter text</b> for a project, <b>+ idea: text</b> for an idea).\n/new starts a fresh conversation. /pending lists what's waiting.", parse_mode: "HTML" });
       await notifyPending();
     } else {
@@ -152,7 +151,7 @@ async function onCallback(q) {
 async function main() {
   const me = await tg("getMe");
   chatId = (await mgr("settings").catch(() => ({})))?.telegram_chat_id ?? null;
-  console.log(`Telegram bot @${me.username} running.${chatId ? " Paired." : ` Not paired: message it "/start ${pairCode}".`}`);
+  console.log(`Telegram bot @${me.username} running.${chatId ? " Paired." : " Not paired: send it /start and the pair code shown in MyManager's Settings."}`);
   setInterval(() => notifyPending().catch((e) => console.log(`[bot] ${e.message}`)), 15000);
   for (;;) {
     try {

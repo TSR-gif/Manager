@@ -33,13 +33,14 @@ export async function getActions(status?: Action["status"][]): Promise<Action[]>
 export async function getSettings(): Promise<Settings> {
   return unwrap(await db().from("settings").select("*").eq("id", 1).single());
 }
-export async function monthSpendCents(): Promise<number> {
+/** Spend this month. includePending also counts paid actions still waiting for his OK. */
+export async function monthSpendCents(opts: { includePending?: boolean } = {}): Promise<number> {
   const start = new Date();
   start.setDate(1);
   start.setHours(0, 0, 0, 0);
   const rows: { cost_cents: number }[] = unwrap(
     await db().from("actions").select("cost_cents")
-      .in("status", ["approved", "executed"]).gte("created_at", start.toISOString()),
+      .in("status", opts.includePending ? ["pending", "approved", "executed"] : ["approved", "executed"]).gte("created_at", start.toISOString()),
   );
   return rows.reduce((s, r) => s + r.cost_cents, 0);
 }

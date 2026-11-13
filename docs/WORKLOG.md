@@ -222,3 +222,16 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - Menu is Today, Projects, Ask (+ More). Approvals and Running are reached from Today. The sidebar lists projects as "dots" with a light: amber needs you, green working.
 - Look: near-black shell with one inset panel, Inter font (bundled in src/app/fonts so it works offline). A full redesign is being done in its own thread; this is an interim.
 - New `watch_job` tool and `watch_process` runbook step: MyManager watches a job Thomas started himself (match a process, tail its log, ping when it finishes or goes quiet) without starting it again. Read-only, so no approval.
+
+## 2026-11-14 · Security fixes from the audit (built as if MyManager were online)
+Thomas plans to host MyManager online soon, so each fix assumes the app can be reached from the internet. Every finding was checked in the code first; all ten were real.
+- **Only this PC can open it.** The app now listens on 127.0.0.1 only (the database already did). New installs get a random password instead of "manager", and the launcher warns while the default password is still set. Thomas changes his own password; MyManager doesn't.
+- **Login.** Five wrong passwords in 15 minutes locks login for 15 minutes. Password and key checks take the same time whatever is typed. After login it only goes back to a page on this site (no more `next=//other-site`).
+- **Every server action checks the login itself**, not just the front door, so posting an action straight at /login is refused. (Tested: a replayed approve with no cookie was refused.)
+- **One approval runs once.** Approving claims the action in a single update; a double tap, or phone and web at once, runs it once. (Tested: 5 approvals at once, then a "no", left it approved once.)
+- **Spend caps are checked again right before a paid action runs**, and waiting requests count toward the monthly cap when new ones are asked. (Tested: an over-cap purchase was refused at approve time.)
+- **Setup commands.** Anything with `& | ; < > ^` backticks, `$(` or a new line is refused outright. "Read-only" is now an exact list per program (git status/log/diff, gh auth status, vercel whoami…); `npx` only counts for vercel and supabase. The guard also blocks `git diff --output` and `type .env.local`.
+- **Login cookie and helper key are now different values**, so a key copied from a helper's config file can't be used to log in. Telegram pairing uses a random one-time code (30 minutes) instead of part of the key. Settings explains that changing the password signs everything out.
+- **Each assistant run has its own config and prompt files**, deleted when the run ends.
+- **Tests:** `npm test` runs tests/security.test.mjs (command checks, the guard hook, key formula, localhost binding).
+- After updating, Thomas has to log in again once (the cookie changed) and re-pair the phone bot if it's set up.

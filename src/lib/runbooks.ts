@@ -1,4 +1,5 @@
 import "server-only";
+import { commandProblem, isReadOnlyCommand } from "@/lib/command-safety.mjs";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -53,10 +54,6 @@ export interface Runbook {
 const LOG_DIR = path.join(process.cwd(), ".localdb-logs");
 const SECRET = /(^|[\\/])\.env|\.env$|secret|credential|\.pem$|\.key$|keys?\.(json|txt)$/i;
 const BULKY = /(^|\/)(\.?venv[^/]*|node_modules|__pycache__|\.next|dist|build)(\/|$)/i;
-/** Programs a run_command / handoff step may start. */
-const ALLOWED_CMD = /^(git|gh|npm|npx|node|py|python|pip|vercel|supabase|claude(\.cmd)?|winget)\b/i;
-/** Commands that only read or sign in: they don't need a second OK. Everything else asks again at that step. */
-const READ_ONLY_CMD = /^(\S+\s+)?(--version|-v|version|whoami|status|list|ls|projects list|login|auth status|link --help)\b|^(git (status|log|diff|remote -v))\b|^gh auth status/i;
 
 export async function logRunbook(id: string, text: string) {
   await db().from("runbook_log").insert({ runbook_id: id, text: text.slice(0, 2000) });
@@ -82,7 +79,7 @@ export function checkSteps(steps: Step[], dir: string | null): string[] {
     if (s.kind === "start_job" && dir && (!s.file || !inside(dir, s.file) || !fs.existsSync(inside(dir, s.file)!))) out.push(`"${s.label}": couldn't find ${s.file} in ${dir}.`);
     if (s.kind === "start_job" && s.file && !/\.(bat|cmd|py|ps1|sh)$/i.test(s.file)) out.push(`"${s.label}": only .bat, .cmd, .py, .ps1 or .sh files can be started.`);
     if (s.kind === "delete_folder" && dir && (!s.path || !inside(dir, s.path) || /(^|[\\/])\.git([\\/]|$)/.test(s.path))) out.push(`"${s.label}": can only delete a folder inside the project (never the project itself or .git).`);
-    if ((s.kind === "run_command" || (s.kind === "handoff" && s.command)) && !ALLOWED_CMD.test((s.command ?? "").trim())) out.push(`"${s.label}": MyManager only runs git, gh, npm, npx, node, py, pip, vercel, supabase, claude or winget commands.`);
+    if ((s.kind === "run_command" || (s.kind === "handoff" && s.command)) && commandProblem(s.command)) out.push(`"${s.label}": ${commandProblem(s.command)}`);
     if (s.kind === "stop_process" && !(s.match ?? "").trim()) out.push(`"${s.label}": say which program to close.`);
     if (/password|card number|cvv|2fa code/i.test(`${s.command ?? ""} ${s.text ?? ""}`) && s.kind !== "handoff") out.push(`"${s.label}": passwords and card details are never typed by MyManager. Make it a hand-over step.`);
   }
@@ -99,7 +96,7 @@ export function stepSummary(s: Step) {
     case "delete_folder": return `Delete the folder ${s.path} (asks you again first)`;
     case "open_link": return `Open ${s.url} for you${opt}`;
     case "handoff": return `Hand over to you: ${s.text ?? s.label}${s.command ? ` (opens a window running \`${s.command}\`)` : ""}${s.blocking === false ? " (only if needed)" : ""}`;
-    case "run_command": return `Run \`${s.command}\`${READ_ONLY_CMD.test(s.command ?? "") ? "" : " (asks you again first)"}${opt}`;
+    case "run_command": return `Run \`${s.command}\`${isReadOnlyCommand(s.command) ? "" : " (asks you again first)"}${opt}`;
   }
 }
 
@@ -310,7 +307,13 @@ async function doStep(r: Runbook, s: Step) {
       }
       case "run_command": {
         const c = (s.command ?? "").trim();
-        if (!READ_ONLY_CMD.test(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
+        const bad = commandProblem(c);
+        if (bad) {
+          s.status = "failed"; s.note = `Not run: ${bad}`;
+          await logRunbook(r.id, `Refused to run \`${c}\`: ${bad}`);
+          break;
+        }
+        if (!isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
         const out = await run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/c", c] : ["-c", c], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true })
           .then((x) => ({ ok: true, text: `${x.stdout}${x.stderr}` }), (e) => ({ ok: false, text: `${e.stdout ?? ""}${e.stderr ?? e.message ?? e}` }));
         s.status = out.ok ? "done" : "failed";
@@ -344,7 +347,7 @@ function openThing(target: string) {
 
 /** A visible window running a sign-in command (e.g. `vercel login`) so Thomas can finish it himself. */
 function openTerminal(command: string, cwd: string, title: string) {
-  if (!ALLOWED_CMD.test(command)) return;
+  if (commandProblem(command)) return;
   if (isWin) spawn("cmd.exe", ["/d", "/c", "start", `"${title.replace(/"/g, "")}"`, "cmd.exe", "/k", command], { cwd, detached: true, stdio: "ignore", windowsVerbatimArguments: false }).on("error", () => {}).unref();
 }
 

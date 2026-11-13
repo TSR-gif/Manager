@@ -17,7 +17,7 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
         </div>
         <input type="hidden" name="next" value={next ?? "/"} />
         <input type="password" name="password" placeholder="Password" autoFocus required />
-        {error && <div className="text-[13px] text-bad">That password didn&apos;t match.</div>}
+        {error && <div className="text-[13px] text-bad">{error === "wait" ? "Too many wrong tries. Wait 15 minutes, then try again." : "That password didn't match."}</div>}
         <button className="btn btn-primary w-full !py-3"><Lock size={15} /> Unlock</button>
       </form>
     </div>

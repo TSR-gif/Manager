@@ -16,6 +16,7 @@ export interface Mission {
   question: string | null; last_update: string | null; check_every_minutes: number; next_check_at: string | null;
   last_check_at: string | null; checks: number; work_dir: string | null; can_code: boolean; worker: "idle" | "working";
   created_at: string; finished_at: string | null;
+  done_check?: string | null; rounds?: number; max_rounds?: number; worktree?: string | null;
 }
 export interface MissionLog { id: string; mission_id: string; kind: string; text: string; created_at: string }
 
@@ -133,7 +134,7 @@ export async function askThomas(id: string, question: string) {
   await db().from("missions").update({ status: "waiting", question }).eq("id", id);
   await logMission(id, "question", question);
   const name = await projectName(m.project_id);
-  const base = process.env.MANAGER_URL ?? `http://localhost:${process.env.PORT ?? "3000"}`;
+  const base = process.env.MANAGER_URL ?? `http://127.0.0.1:${process.env.PORT ?? "3000"}`;
   await notify(`❓ **${name ?? "MyManager"} needs you**\n${question}\n\nReply to this message to answer. #m:${shortId(id)}`, { label: "Open in MyManager", url: `${base}/supervise` }).catch(() => false);
   return true;
 }

@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
-import { COOKIE, sessionToken } from "@/lib/auth";
-import { decideAction, quickCapture } from "@/app/actions";
+import { COOKIE, managerKey, sameText, sessionToken } from "@/lib/auth";
+import { quickCapture } from "@/app/actions";
+import { decideAction } from "@/lib/action-queue";
 import { getActions } from "@/lib/queries";
 import { kindOf } from "@/lib/action-registry";
 import { db } from "@/lib/db";
@@ -9,13 +10,12 @@ export const dynamic = "force-dynamic";
 
 /** Small API for the phone bot (scripts/telegram.mjs). Auth: session cookie or x-manager-key header. */
 async function authed(req: Request) {
-  const t = await sessionToken();
-  return req.headers.get("x-manager-key") === t || (await cookies()).get(COOKIE)?.value === t;
+  return sameText(req.headers.get("x-manager-key"), await managerKey()) || sameText((await cookies()).get(COOKIE)?.value, await sessionToken());
 }
 
 export async function POST(req: Request) {
   if (!(await authed(req))) return new Response("Unauthorized", { status: 401 });
-  const body = (await req.json()) as { op: string; id?: string; approve?: boolean; text?: string; chat_id?: string };
+  const body = (await req.json()) as { op: string; id?: string; approve?: boolean; text?: string; chat_id?: string; code?: string };
   switch (body.op) {
     case "pending": {
       const rows = await getActions(["pending"]);
@@ -44,7 +44,12 @@ export async function POST(req: Request) {
       return Response.json({ ok: true });
     }
     case "pair": {
-      await db().from("settings").update({ telegram_chat_id: body.chat_id ?? null }).eq("id", 1);
+      // The phone sends the one-time code shown in Settings. It works once, for 30 minutes.
+      const code = String(body.code ?? "").trim().toUpperCase();
+      const { data: s } = await db().from("settings").select("telegram_pair_code,telegram_pair_expires").eq("id", 1).single();
+      const live = s?.telegram_pair_code && s.telegram_pair_expires && new Date(s.telegram_pair_expires).getTime() > Date.now();
+      if (!code || !live || !sameText(code, String(s.telegram_pair_code))) return Response.json({ ok: false });
+      await db().from("settings").update({ telegram_chat_id: body.chat_id ?? null, telegram_pair_code: null, telegram_pair_expires: null }).eq("id", 1);
       return Response.json({ ok: true });
     }
     case "settings": {

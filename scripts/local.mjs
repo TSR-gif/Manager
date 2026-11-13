@@ -8,12 +8,15 @@ import crypto from "node:crypto";
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
 const envFile = path.join(ROOT, ".env.local");
 const isWin = process.platform === "win32";
+// Only this PC can open MyManager. Other devices on the Wi-Fi can't reach it.
+const HOST = process.env.MANAGER_HOST || "127.0.0.1";
 
 // First run: write a local settings file.
 if (!fs.existsSync(envFile)) {
+  const firstPassword = crypto.randomBytes(9).toString("base64url");
   fs.writeFileSync(envFile, [
     "# Local settings for MyManager. Change APP_PASSWORD to whatever you like.",
-    "APP_PASSWORD=manager",
+    `APP_PASSWORD=${firstPassword}`,
     `AUTH_SECRET=${crypto.randomBytes(24).toString("hex")}`,
     "SUPABASE_URL=http://localhost:3001",
     "SUPABASE_SERVICE_ROLE_KEY=local",
@@ -31,7 +34,7 @@ if (!fs.existsSync(envFile)) {
     "TELEGRAM_BOT_TOKEN=",
     "",
   ].join("\n"));
-  console.log("Created .env.local (login password: manager)");
+  console.log(`Created .env.local. Your login password is: ${firstPassword}  (change it in .env.local any time)`);
 }
 
 // Read .env.local so the helper processes (Telegram bot) get the same settings as the app.
@@ -40,6 +43,10 @@ for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
   const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
   if (m && env[m[1]] === undefined) env[m[1]] = m[2];
 }
+if (!env.APP_PASSWORD || ["manager", "password", "changeme"].includes(env.APP_PASSWORD.toLowerCase())) {
+  console.log("\n  WARNING: your MyManager password is still the default. Change APP_PASSWORD in .env.local, then restart.\n");
+}
+// Same value as managerKey() in src/lib/auth.ts (tests/security.test.mjs checks they match).
 const managerKey = crypto.createHash("sha256").update(`${env.AUTH_SECRET ?? "manager"}:${env.APP_PASSWORD ?? ""}`).digest("hex");
 
 const run = (cmd, args, name, opts = {}) => {
@@ -55,7 +62,7 @@ const db = run(process.execPath, [path.join(ROOT, "scripts", "dev-rest.mjs")], "
 // give the database a moment to open/migrate before the app starts
 await new Promise((r) => setTimeout(r, 2500));
 const nextBin = path.join(ROOT, "node_modules", "next", "dist", "bin", "next");
-const app = run(process.execPath, [nextBin, "dev", "-p", "3000"], "app");
+const app = run(process.execPath, [nextBin, "dev", "-p", "3000", "-H", HOST], "app");
 
 setTimeout(() => {
   const url = "http://localhost:3000";
@@ -70,7 +77,7 @@ setTimeout(() => {
 }, 6000);
 
 // Proactive assistant: ask Manager every 5 minutes whether a brief or check-in is due.
-const tickProactive = () => fetch("http://localhost:3000/api/proactive", {
+const tickProactive = () => fetch("http://127.0.0.1:3000/api/proactive", {
   method: "POST", headers: { "Content-Type": "application/json", "x-manager-key": managerKey }, body: JSON.stringify({ op: "tick" }),
 }).then((r) => r.json()).then((j) => { if (j.kind) console.log(`[assistant] ${j.kind} ${j.quiet ? "(nothing to report)" : "sent"}`); }).catch(() => {});
 setTimeout(() => { tickProactive(); setInterval(tickProactive, 5 * 60_000); }, 60_000);
@@ -88,7 +95,7 @@ const syncBot = () => {
   botToken = t;
   if (bot) { bot.kill(); bot = null; }
   if (t) {
-    bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { TELEGRAM_BOT_TOKEN: t, MANAGER_URL: "http://localhost:3000", MANAGER_KEY: managerKey } });
+    bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { TELEGRAM_BOT_TOKEN: t, MANAGER_URL: "http://127.0.0.1:3000", MANAGER_KEY: managerKey } });
     // if it stops (no internet, Telegram down), try again on a later check
     const me = bot;
     me.on("exit", () => { if (bot === me) bot = null; setTimeout(() => { if (botToken === t) botToken = ""; }, 20_000); });

@@ -1,6 +1,7 @@
 import { Bell, Bot, CheckCircle2, Code2, ExternalLink, Landmark, Send, ShieldCheck, Sparkles, Timer } from "lucide-react";
 import { setMessageMode, connectGithub, connectTelegram, connectUp, disconnectGithub, disconnectTelegram, disconnectUp, saveAssistant, saveSettings, setAutonomy, unpairPhone } from "@/app/actions";
-import { sessionToken } from "@/lib/auth";
+import { randomBytes } from "node:crypto";
+import { db } from "@/lib/db";
 import { isLocal } from "@/lib/local-env";
 import { githubAccess } from "@/lib/inspect";
 import { getSettings, monthSpendCents } from "@/lib/queries";
@@ -46,6 +47,14 @@ const Step = ({ n, children }: { n: number; children: React.ReactNode }) => (
   </li>
 );
 
+/** A random one-time code for linking the phone, good for 30 minutes (not part of the app's key). */
+async function freshPairCode(s: { telegram_pair_code?: string | null; telegram_pair_expires?: string | null }) {
+  if (s.telegram_pair_code && s.telegram_pair_expires && new Date(s.telegram_pair_expires).getTime() - Date.now() > 5 * 60_000) return s.telegram_pair_code;
+  const code = randomBytes(5).toString("hex").toUpperCase();
+  await db().from("settings").update({ telegram_pair_code: code, telegram_pair_expires: new Date(Date.now() + 30 * 60_000).toISOString() }).eq("id", 1);
+  return code;
+}
+
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ ok?: string; err?: string }> }) {
   const { ok, err } = await searchParams;
   const [settings, spent] = await Promise.all([getSettings(), monthSpendCents()]);
@@ -56,7 +65,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const local = isLocal();
   const botOn = !!process.env.TELEGRAM_BOT_TOKEN;
   const paired = !!s.telegram_chat_id;
-  const pairCode = (await sessionToken()).slice(0, 8).toUpperCase();
+  const pairCode = paired || !botOn ? "" : await freshPairCode(s as { telegram_pair_code?: string | null; telegram_pair_expires?: string | null });
   const upOn = !!process.env.UP_TOKEN;
   const gh = await githubAccess();
   const flash = MSG[ok ?? err ?? ""];
@@ -230,6 +239,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <input type="hidden" name="focus_minutes" value={s.focus_minutes} />
           <div className="sm:col-span-2"><button className="btn btn-primary w-full !py-2.5">Save limits</button></div>
         </form>
+        <p className="mt-4 text-[12px] text-faint">Think your password got out? Change APP_PASSWORD in the .env.local file in the MyManager folder, then restart MyManager. That signs out every browser and phone and cancels the old key.</p>
       </Section>
 
       <Section icon={<Timer size={19} />} title="Focus" sub="How long a focus session runs, and how many projects you juggle at once.">

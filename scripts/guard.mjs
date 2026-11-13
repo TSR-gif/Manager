@@ -16,7 +16,7 @@ const block = (why) => {
   process.exit(2);
 };
 
-const SECRET = /(^|[\\/])\.env($|\.)|\.env$|\.pem$|\.key$|secret|credential|_keys?\b|[\\/]\.ssh[\\/]|[\\/]\.aws[\\/]|access-token|login data|cookies$/i;
+const SECRET = /(^|[\s"'=\\/])\.env($|[.\s"'])|\.env$|\.pem$|\.key$|secret|credential|_keys?\b|[\\/]\.ssh[\\/]|[\\/]\.aws[\\/]|access-token|login data|cookies$/i;
 
 const DESTRUCTIVE = [
   [/\b(rm|rmdir|del|erase|rd|unlink|shred|truncate)\b/, "deleting files"],
@@ -37,6 +37,7 @@ const DESTRUCTIVE = [
   [/\b(drop\s+(table|database|schema)|truncate\s+table|delete\s+from)\b/, "wiping database data"],
   [/\bsupabase\s+(db\s+reset|projects\s+delete|db\s+push)|\bvercel\s+(rm|remove|domains\s+rm|env\s+rm|--prod)\b/, "changing or deleting things online"],
   [/shutil\.rmtree|os\.remove|os\.unlink|\.unlink\(|rmsync|rmdirsync|unlinksync|fs\.rm\(|remove-item/, "deleting files from a script"],
+  [/\bgit\s+(diff|log|show|format-patch)\b.*--output\b/, "overwriting a file with git --output"],
   [/(^|[^>2&=\-])>(?!>)\s*(?!(nul|\/dev\/null|&))[\w.\\/"'$%~]/, "overwriting a file with >"],
 ];
 

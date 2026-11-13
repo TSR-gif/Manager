@@ -2,7 +2,7 @@ import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import { db, unwrap } from "@/lib/db";
 import { getMoney } from "@/lib/up";
-import { queueAction } from "@/app/actions";
+import { queueAction } from "@/lib/action-queue";
 import type { Project, Task } from "@/lib/types";
 
 type Tool = Anthropic.Beta.BetaTool;

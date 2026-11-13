@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { COOKIE, sessionToken } from "@/lib/auth";
+import { COOKIE, sameText, sessionToken } from "@/lib/auth";
 import { runAgent } from "@/lib/agent/run";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 /** POST { goal, runId? } -> NDJSON stream of agent events. */
 export async function POST(req: Request) {
   const token = (await cookies()).get(COOKIE)?.value;
-  if (!token || token !== (await sessionToken())) return new Response("Unauthorized", { status: 401 });
+  if (!sameText(token, await sessionToken())) return new Response("Unauthorized", { status: 401 });
   const { goal, runId } = (await req.json()) as { goal?: string; runId?: string };
   if (!goal?.trim()) return new Response("Missing goal", { status: 400 });
 

@@ -1,11 +1,11 @@
-import { sessionToken } from "@/lib/auth";
+import { managerKey, sameText } from "@/lib/auth";
 import { AGENT_TOOLS, runTool } from "@/lib/agent/tools";
 
 export const dynamic = "force-dynamic";
 
 /** Used by the local MCP bridge (scripts/mcp-manager.mjs) so the Claude Code app can call Manager's tools. */
 async function authed(req: Request) {
-  return req.headers.get("x-manager-key") === (await sessionToken());
+  return sameText(req.headers.get("x-manager-key"), await managerKey());
 }
 
 export async function GET(req: Request) {

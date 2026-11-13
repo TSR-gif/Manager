@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { COOKIE, sessionToken } from "@/lib/auth";
+import { COOKIE, managerKey, sameText, sessionToken } from "@/lib/auth";
 import { db, unwrap } from "@/lib/db";
+import * as q from "@/lib/action-queue";
 import { kindOf } from "@/lib/action-registry";
-import { trustLevel } from "@/lib/trust";
-import { getSettings, monthSpendCents } from "@/lib/queries";
+import { getSettings } from "@/lib/queries";
 import type { Action } from "@/lib/types";
 
 const str = (f: FormData, k: string) => {
@@ -17,13 +17,28 @@ const str = (f: FormData, k: string) => {
 const refresh = () => revalidatePath("/", "layout");
 
 // ---------- auth ----------
+/** Every server action can be called straight over the network, so each one checks the login itself
+ *  (the cookie, or the key header the phone bot and the assistant's bridge use), not just the middleware. */
+async function requireAuth() {
+  if (sameText((await cookies()).get(COOKIE)?.value, await sessionToken())) return;
+  if (sameText((await headers()).get("x-manager-key"), await managerKey())) return;
+  throw new Error("Not signed in");
+}
+
+// Slows down password guessing: after 5 wrong tries, wait 15 minutes.
+const tries: number[] = [];
 export async function login(form: FormData) {
+  const now = Date.now();
+  while (tries.length && now - tries[0] > 15 * 60_000) tries.shift();
+  if (tries.length >= 5) redirect("/login?error=wait");
   const pw = str(form, "password");
-  if (!pw || pw !== process.env.APP_PASSWORD) redirect("/login?error=1");
+  if (!pw || !sameText(pw, process.env.APP_PASSWORD ?? "")) { tries.push(now); redirect("/login?error=1"); }
   (await cookies()).set(COOKIE, await sessionToken(), {
     httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 90,
   });
-  redirect(str(form, "next") ?? "/");
+  // Only go back to a page on this site, never to another website.
+  const next = str(form, "next") ?? "/";
+  redirect(next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/");
 }
 export async function logout() {
   (await cookies()).delete(COOKIE);
@@ -36,6 +51,7 @@ async function touch(projectId: string | null) {
 }
 
 export async function saveProject(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const status = str(form, "status") ?? "active";
   const prev = id ? (await db().from("projects").select("status").eq("id", id).maybeSingle()).data : null;
@@ -70,12 +86,14 @@ export async function saveProject(form: FormData) {
 }
 
 export async function setProjectStatus(id: string, status: string) {
+  await requireAuth();
   unwrap(await db().from("projects").update({ status }).eq("id", id).select());
   refresh();
 }
 
 // ---------- tasks ----------
 export async function addTask(form: FormData) {
+  await requireAuth();
   const title = str(form, "title");
   if (!title) return;
   const project_id = str(form, "project_id");
@@ -86,6 +104,7 @@ export async function addTask(form: FormData) {
   refresh();
 }
 export async function setTaskStatus(id: string, status: "todo" | "doing" | "done") {
+  await requireAuth();
   const [t] = unwrap(await db().from("tasks").update({
     status, done_at: status === "done" ? new Date().toISOString() : null,
   }).eq("id", id).select());
@@ -93,18 +112,21 @@ export async function setTaskStatus(id: string, status: "todo" | "doing" | "done
   refresh();
 }
 export async function deleteTask(id: string) {
+  await requireAuth();
   await db().from("tasks").delete().eq("id", id);
   refresh();
 }
 
 // ---------- ideas ----------
 export async function addIdea(form: FormData) {
+  await requireAuth();
   const text = str(form, "text");
   if (!text) return;
   unwrap(await db().from("ideas").insert({ text }).select());
   refresh();
 }
 export async function triageIdea(id: string, decision: "promote" | "park" | "kill") {
+  await requireAuth();
   const now = new Date().toISOString();
   if (decision === "promote") {
     const { data: idea } = await db().from("ideas").select("*").eq("id", id).single();
@@ -121,6 +143,7 @@ export async function triageIdea(id: string, decision: "promote" | "park" | "kil
 // ---------- quick capture ----------
 // "idea: ..." -> idea inbox, "#Project ..." -> task on that project, otherwise everyday task.
 export async function quickCapture(form: FormData) {
+  await requireAuth();
   const raw = str(form, "text");
   if (!raw) return;
   if (/^idea[:\s]/i.test(raw)) {
@@ -143,6 +166,7 @@ export async function quickCapture(form: FormData) {
 
 // ---------- focus ----------
 export async function startFocus(form: FormData) {
+  await requireAuth();
   await db().from("focus_sessions").update({ ended_at: new Date().toISOString(), outcome: "switched" }).is("ended_at", null);
   const project_id = str(form, "project_id");
   unwrap(await db().from("focus_sessions").insert({
@@ -152,102 +176,27 @@ export async function startFocus(form: FormData) {
   refresh();
 }
 export async function endFocus(form: FormData) {
+  await requireAuth();
   await db().from("focus_sessions").update({
     ended_at: new Date().toISOString(), outcome: str(form, "outcome") ?? "done",
   }).is("ended_at", null);
   refresh();
 }
 
-// ---------- approval queue ----------
-export async function queueAction(input: {
-  kind: string; title: string; reason?: string; payload?: Record<string, unknown>;
-  cost_cents?: number; project_id?: string | null; requested_by?: string;
-}): Promise<Action> {
-  const k = kindOf(input.kind);
-  const cost = Math.max(0, Math.round(input.cost_cents ?? 0));
-  const s = await getSettings();
-  let risk: Action["risk"] = cost > 0 ? "approval" : k.risk;
-  let blockedWhy: string | null = null;
-  if (cost > s.per_purchase_cap_cents) blockedWhy = "over per-purchase cap";
-  else if (cost > 0 && (await monthSpendCents()) + cost > s.monthly_cap_cents) blockedWhy = "over monthly cap";
-  if (blockedWhy) risk = "blocked";
-  // Trust ladder: a trustable, free action type Thomas has approved N times in a row runs on its own.
-  let trusted = false;
-  if (!blockedWhy && risk === "approval" && cost === 0 && (await trustLevel(k.kind)).trusted) { risk = "auto"; trusted = true; }
-
-  const [a] = unwrap(await db().from("actions").insert({
-    kind: k.kind, title: input.title, reason: input.reason ?? null, payload: input.payload ?? {},
-    cost_cents: cost, risk, project_id: input.project_id ?? null,
-    requested_by: input.requested_by ?? "user",
-    status: blockedWhy ? "rejected" : "pending",
-    result: blockedWhy ? { blocked: blockedWhy } : null,
-    decided_at: blockedWhy ? new Date().toISOString() : null,
-    ...(trusted ? { reason: `${input.reason ? input.reason + " · " : ""}auto-approved by trust ladder` } : {}),
-  }).select());
-  if (risk === "auto") return await execute(a);
-  refresh();
-  return a;
+// ---------- approval queue (the work is in lib/action-queue.ts) ----------
+export async function queueAction(input: Parameters<typeof q.queueAction>[0]): Promise<Action> {
+  await requireAuth();
+  return q.queueAction(input);
 }
-
-/** Keep an ad campaign's status in step with its approval: waiting → ready (approved) → live (you launched it). */
-async function syncCampaign(a: Pick<Action, "kind" | "payload">, step: "approved" | "rejected" | "done") {
-  const id = (a.payload as { campaign_id?: string })?.campaign_id;
-  if (!id || !a.kind.startsWith("ads.")) return;
-  const p = a.payload as { daily_budget_cents?: number; days?: number };
-  if (a.kind === "ads.launch") {
-    const status = step === "approved" ? "ready" : step === "rejected" ? "draft" : "live";
-    await db().from("campaigns").update({ status, ...(step === "done" ? { started_on: new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne" }).format(new Date()) } : {}) }).eq("id", id);
-  } else if (a.kind === "ads.budget" && step === "approved") {
-    await db().from("campaigns").update({ ...(p.daily_budget_cents != null ? { daily_budget_cents: p.daily_budget_cents } : {}), ...(p.days != null ? { days: p.days } : {}) }).eq("id", id);
-  } else if (a.kind === "ads.pause" && step === "approved") {
-    await db().from("campaigns").update({ status: "paused" }).eq("id", id);
-  }
-}
-
-async function execute(a: Action): Promise<Action> {
-  const k = kindOf(a.kind);
-  const now = new Date().toISOString();
-  await syncCampaign(a, "approved");
-  if (!k.execute) {
-    // Nothing automatic to run: approved and handed to the agent / PC helper / you.
-    const [r] = unwrap(await db().from("actions").update({ status: "approved", decided_at: a.decided_at ?? now }).eq("id", a.id).select());
-    refresh();
-    return r;
-  }
-  try {
-    const result = await k.execute(a);
-    const [r] = unwrap(await db().from("actions").update({ status: "executed", result, executed_at: now, decided_at: a.decided_at ?? now }).eq("id", a.id).select());
-    refresh();
-    return r;
-  } catch (e) {
-    const [r] = unwrap(await db().from("actions").update({ status: "failed", result: { error: String(e) }, executed_at: now }).eq("id", a.id).select());
-    refresh();
-    return r;
-  }
-}
-
 export async function decideAction(id: string, approve: boolean) {
-  const { data: a } = await db().from("actions").select("*").eq("id", id).single();
-  if (!a || a.status !== "pending") return;
-  const now = new Date().toISOString();
-  if (!approve) {
-    await db().from("actions").update({ status: "rejected", decided_at: now }).eq("id", id);
-    await syncCampaign(a, "rejected");
-    if (a.kind === "runbook.step" || a.kind === "runbook.run") {
-      const rb = await import("@/lib/runbooks");
-      const p = a.payload as { runbook_id: string; step_id?: string };
-      if (a.kind === "runbook.step" && p.step_id) await rb.resolveStep(p.runbook_id, p.step_id, "rejected");
-      else await db().from("runbooks").update({ status: "stopped", last_update: "You said no, so nothing ran." }).eq("id", p.runbook_id);
-    }
-    refresh();
-    return;
-  }
-  await execute({ ...a, decided_at: now });
+  await requireAuth();
+  return q.decideAction(id, approve);
 }
 
 export async function markActionDone(id: string, form: FormData) {
+  await requireAuth();
   const { data: a } = await db().from("actions").select("kind,payload,status").eq("id", id).maybeSingle();
-  if (a?.status === "approved") await syncCampaign(a, "done");
+  if (a?.status === "approved") await q.syncCampaign(a, "done");
   await db().from("actions").update({
     status: "executed", executed_at: new Date().toISOString(), result: { note: str(form, "note") },
   }).eq("id", id).eq("status", "approved");
@@ -255,6 +204,7 @@ export async function markActionDone(id: string, form: FormData) {
 }
 
 export async function requestAction(form: FormData) {
+  await requireAuth();
   const dollars = Number(str(form, "cost") ?? 0);
   const kind = str(form, "kind") ?? "other";
   const payload: Record<string, unknown> = {};
@@ -267,6 +217,7 @@ export async function requestAction(form: FormData) {
 }
 
 export async function saveSettings(form: FormData) {
+  await requireAuth();
   const n = (k: string, d: number) => Number(str(form, k) ?? d);
   await db().from("settings").update({
     max_active_projects: n("max_active_projects", 3),
@@ -279,11 +230,13 @@ export async function saveSettings(form: FormData) {
 }
 
 export async function unpairPhone() {
+  await requireAuth();
   await db().from("settings").update({ telegram_chat_id: null }).eq("id", 1);
   refresh();
 }
 
 export async function saveAssistant(form: FormData) {
+  await requireAuth();
   const time = (k: string, d: string) => (/^\d{2}:\d{2}$/.test(str(form, k) ?? "") ? str(form, k)! : d);
   const patch: Record<string, unknown> = {
     assistant_name: (str(form, "assistant_name") ?? "MyManager").slice(0, 24),
@@ -297,6 +250,7 @@ export async function saveAssistant(form: FormData) {
 }
 
 export async function toggleWatch(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const { data } = await db().from("projects").select("watch").eq("id", id).single();
@@ -305,12 +259,14 @@ export async function toggleWatch(form: FormData) {
 }
 
 export async function setAutonomy(form: FormData) {
+  await requireAuth();
   const v = str(form, "autonomy");
   if (v && ["ask", "balanced", "decide"].includes(v)) await db().from("settings").update({ autonomy: v }).eq("id", 1);
   refresh();
 }
 
 export async function completeReview() {
+  await requireAuth();
   await db().from("settings").update({ last_review_at: new Date().toISOString() }).eq("id", 1);
   refresh();
   redirect("/");
@@ -320,6 +276,7 @@ export async function completeReview() {
 const cents = (v: string | null | undefined) => Math.round(Number((v ?? "0").replace(/[$,\s]/g, "")) * 100) || 0;
 
 export async function saveClientSettings(form: FormData) {
+  await requireAuth();
   const id = str(form, "project_id");
   if (!id) return;
   await db().from("projects").update({ client_name: str(form, "client_name"), hourly_rate_cents: cents(str(form, "rate")) || null }).eq("id", id);
@@ -327,6 +284,7 @@ export async function saveClientSettings(form: FormData) {
 }
 
 export async function logTime(form: FormData) {
+  await requireAuth();
   const project_id = str(form, "project_id");
   const h = Number(str(form, "hours") ?? 0);
   const minutes = Math.round(h * 60);
@@ -337,6 +295,7 @@ export async function logTime(form: FormData) {
 }
 
 export async function deleteTimeEntry(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (id) await db().from("time_entries").delete().eq("id", id).is("invoice_id", null);
   refresh();
@@ -344,6 +303,7 @@ export async function deleteTimeEntry(form: FormData) {
 
 /** Turns all unbilled hours into a draft invoice (hours × rate, or a fixed amount if given). */
 export async function createInvoice(form: FormData) {
+  await requireAuth();
   const project_id = str(form, "project_id");
   if (!project_id) return;
   const { data: p } = await db().from("projects").select("hourly_rate_cents").eq("id", project_id).single();
@@ -361,6 +321,7 @@ export async function createInvoice(form: FormData) {
 }
 
 export async function setInvoiceStatus(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const status = str(form, "status");
   if (!id || !status || !["draft", "sent", "paid", "void"].includes(status)) return;
@@ -376,6 +337,7 @@ export async function setInvoiceStatus(form: FormData) {
 
 // ---------- subscriptions ----------
 export async function saveSubscription(form: FormData) {
+  await requireAuth();
   const name = str(form, "name");
   if (!name) return;
   const cycle = str(form, "cycle") ?? "monthly";
@@ -388,6 +350,7 @@ export async function saveSubscription(form: FormData) {
 }
 
 export async function setSubscriptionStatus(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const status = str(form, "status");
   if (id && status && ["active", "cancelled", "trial"].includes(status)) await db().from("subscriptions").update({ status }).eq("id", id);
@@ -396,6 +359,7 @@ export async function setSubscriptionStatus(form: FormData) {
 
 // ---------- what Manager knows ----------
 export async function addMemory(form: FormData) {
+  await requireAuth();
   const fact = str(form, "fact");
   const category = str(form, "category") ?? "general";
   if (fact) await db().from("memories").insert({ fact: fact.slice(0, 500), category, source: "user" });
@@ -403,6 +367,7 @@ export async function addMemory(form: FormData) {
 }
 
 export async function deleteMemory(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (id) await db().from("memories").delete().eq("id", id);
   refresh();
@@ -412,6 +377,7 @@ export async function deleteMemory(form: FormData) {
 const back = (q: string) => redirect(`/settings?${q}`);
 
 export async function connectTelegram(form: FormData) {
+  await requireAuth();
   const { setLocalEnv } = await import("@/lib/local-env");
   const token = (str(form, "token") ?? "").trim();
   if (!/^\d+:[\w-]{20,}$/.test(token)) back("err=telegram-format#phone");
@@ -430,6 +396,7 @@ export async function connectTelegram(form: FormData) {
 }
 
 export async function disconnectTelegram() {
+  await requireAuth();
   const { setLocalEnv } = await import("@/lib/local-env");
   setLocalEnv("TELEGRAM_BOT_TOKEN", "");
   await db().from("settings").update({ telegram_bot_name: null, telegram_chat_id: null }).eq("id", 1);
@@ -438,6 +405,7 @@ export async function disconnectTelegram() {
 }
 
 export async function connectUp(form: FormData) {
+  await requireAuth();
   const { setLocalEnv } = await import("@/lib/local-env");
   const token = (str(form, "token") ?? "").trim();
   if (token.length < 10 || /\s/.test(token)) back("err=up-format#bank");
@@ -453,6 +421,7 @@ export async function connectUp(form: FormData) {
 }
 
 export async function disconnectUp() {
+  await requireAuth();
   const { setLocalEnv } = await import("@/lib/local-env");
   setLocalEnv("UP_TOKEN", "");
   refresh();
@@ -460,11 +429,13 @@ export async function disconnectUp() {
 }
 
 export async function dismissWelcome() {
+  await requireAuth();
   (await cookies()).set("welcomed", "1", { maxAge: 60 * 60 * 24 * 3650, path: "/", sameSite: "lax" });
   refresh();
 }
 
 export async function connectGithub(form: FormData) {
+  await requireAuth();
   const { setLocalEnv } = await import("@/lib/local-env");
   const token = (str(form, "token") ?? "").trim();
   if (token.length < 20 || /\s/.test(token)) back("err=github-format#code");
@@ -480,6 +451,7 @@ export async function connectGithub(form: FormData) {
 }
 
 export async function disconnectGithub() {
+  await requireAuth();
   const { setLocalEnv } = await import("@/lib/local-env");
   setLocalEnv("GITHUB_TOKEN", "");
   refresh();
@@ -489,6 +461,7 @@ export async function disconnectGithub() {
 // ---------- undo what the assistant did ----------
 const UNDO_TABLES = new Set(["tasks", "projects", "memories", "time_entries", "subscriptions", "ideas", "campaigns", "missions"]);
 export async function undoActivity(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const { data: a } = await db().from("activity").select("*").eq("id", id).maybeSingle();
@@ -502,11 +475,13 @@ export async function undoActivity(form: FormData) {
 
 /** Private usage log: which screens, how long. Never leaves this PC's database. */
 export async function logUsage(path: string, seconds: number, device: string) {
+  await requireAuth();
   if (!path || path.startsWith("/login") || !(seconds >= 0)) return;
   await db().from("usage_events").insert({ path: path.slice(0, 120), seconds: Math.min(3600, Math.round(seconds)), device: device === "phone" ? "phone" : "desktop" });
 }
 
 export async function setMessageMode(form: FormData) {
+  await requireAuth();
   const m = str(form, "mode");
   if (!m || !["needed", "daily", "more"].includes(m)) return;
   await db().from("settings").update({ message_mode: m, proactive: true, checkin_hours: m === "daily" ? 0 : 3 }).eq("id", 1);
@@ -514,6 +489,7 @@ export async function setMessageMode(form: FormData) {
 }
 
 export async function pauseProjects(form: FormData) {
+  await requireAuth();
   const ids = form.getAll("id").map(String).filter(Boolean).slice(0, 20);
   for (const id of ids) {
     await db().from("projects").update({ status: "paused" }).eq("id", id);
@@ -525,6 +501,7 @@ export async function pauseProjects(form: FormData) {
 
 // ---------- recurring jobs ----------
 export async function saveJob(form: FormData) {
+  await requireAuth();
   const { DAYS } = await import("@/lib/jobs");
   const id = str(form, "id");
   const days = form.getAll("days").map(String).filter((d) => (DAYS as readonly string[]).includes(d));
@@ -544,6 +521,7 @@ export async function saveJob(form: FormData) {
 }
 
 export async function toggleJob(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const { data } = await db().from("jobs").select("enabled").eq("id", id).single();
@@ -552,6 +530,7 @@ export async function toggleJob(form: FormData) {
 }
 
 export async function deleteJob(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (id) await db().from("jobs").delete().eq("id", id);
   refresh();
@@ -559,6 +538,7 @@ export async function deleteJob(form: FormData) {
 
 /** Run a job now and watch it work in the assistant screen. */
 export async function runJobNow(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const { goalFor } = await import("@/lib/jobs");
@@ -574,6 +554,7 @@ const centsOf = (v: string | null) => Math.round(Number((v ?? "0").replace(/[$,\
 
 /** Save a campaign draft. Launching it is a separate, approved step. */
 export async function saveCampaign(form: FormData) {
+  await requireAuth();
   const row = {
     project_id: str(form, "project_id"), name: (str(form, "name") ?? "New campaign").slice(0, 80),
     platform: str(form, "platform") ?? "meta", goal: str(form, "goal"), audience: str(form, "audience"), creative: str(form, "creative"),
@@ -587,6 +568,7 @@ export async function saveCampaign(form: FormData) {
 
 /** Ask to launch: total budget goes through Approvals and the spend limits. */
 export async function requestLaunch(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const { data: c } = await db().from("campaigns").select("*").eq("id", id).single();
   if (!c) return;
@@ -601,6 +583,7 @@ export async function requestLaunch(form: FormData) {
 }
 
 export async function setCampaignStatus(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const status = str(form, "status");
   if (!id || !status || !["live", "paused", "ended"].includes(status)) return;
@@ -610,6 +593,7 @@ export async function setCampaignStatus(form: FormData) {
 
 /** Record spend and results from the ads dashboard (or the assistant can do it). */
 export async function logCampaignResults(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const n = (k: string) => Math.max(0, Math.round(Number(str(form, k) ?? 0)) || 0);
@@ -620,6 +604,7 @@ export async function logCampaignResults(form: FormData) {
 // ---------- supervise ----------
 /** Start supervising from the Supervise screen: goal + steps (one per line). */
 export async function startMission(form: FormData) {
+  await requireAuth();
   const projectId = str(form, "project_id");
   const goal = str(form, "goal");
   if (!projectId || !goal) return;
@@ -647,6 +632,7 @@ export async function startMission(form: FormData) {
 }
 
 export async function answerMissionForm(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const answer = str(form, "answer");
   if (!id || !answer) return;
@@ -656,6 +642,7 @@ export async function answerMissionForm(form: FormData) {
 }
 
 export async function checkMissionNow(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   await db().from("missions").update({ next_check_at: new Date().toISOString() }).eq("id", id);
@@ -665,6 +652,7 @@ export async function checkMissionNow(form: FormData) {
 }
 
 export async function setMissionStatus(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   const status = str(form, "status");
   if (!id || !status) return;
@@ -676,6 +664,7 @@ export async function setMissionStatus(form: FormData) {
 
 // ---------- project folders on this PC ----------
 export async function findProjectFolders() {
+  await requireAuth();
   const { linkProjectFolders } = await import("@/lib/local-repos");
   const r = await linkProjectFolders();
   refresh();
@@ -683,6 +672,7 @@ export async function findProjectFolders() {
 }
 
 export async function setProjectFolder(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   await db().from("projects").update({ local_path: str(form, "local_path") }).eq("id", id);
@@ -691,6 +681,7 @@ export async function setProjectFolder(form: FormData) {
 
 // ---------- project briefs ----------
 export async function saveBrief(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   await db().from("projects").update({ brief: str(form, "brief"), brief_updated_at: new Date().toISOString(), brief_edited_by_you: true }).eq("id", id);
@@ -698,6 +689,7 @@ export async function saveBrief(form: FormData) {
 }
 
 export async function saveRules(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   await db().from("projects").update({ rules: str(form, "rules") }).eq("id", id);
@@ -706,6 +698,7 @@ export async function saveRules(form: FormData) {
 
 /** Study the project now and watch it happen in the assistant screen. */
 export async function studyNow(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const { data: p } = await db().from("projects").select("*").eq("id", id).single();
@@ -716,6 +709,7 @@ export async function studyNow(form: FormData) {
 
 // ---------- runbooks ----------
 export async function runbookStepDone(form: FormData) {
+  await requireAuth();
   const id = str(form, "id"), step = str(form, "step");
   if (!id || !step) return;
   const { resolveStep } = await import("@/lib/runbooks");
@@ -724,6 +718,7 @@ export async function runbookStepDone(form: FormData) {
 }
 
 export async function runbookStop(form: FormData) {
+  await requireAuth();
   const id = str(form, "id");
   if (!id) return;
   const { stopRunbook } = await import("@/lib/runbooks");

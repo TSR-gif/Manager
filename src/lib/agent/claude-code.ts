@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { db } from "@/lib/db";
-import { sessionToken } from "@/lib/auth";
+import { managerKey } from "@/lib/auth";
 import { liveRuns } from "@/lib/agent/live";
 import { guarded } from "@/lib/agent/guard";
 import { AGENT_TOOLS } from "./tools";
@@ -60,12 +60,12 @@ export async function runClaudeCode(
   // MCP config pointing Claude Code at Manager's tools
   const root = process.cwd();
   const port = process.env.PORT ?? "3000";
-  const cfgPath = path.join(os.tmpdir(), `manager-mcp-${process.pid}.json`);
+  const cfgPath = path.join(os.tmpdir(), `manager-mcp-${id}.json`);
   const servers: Record<string, unknown> = {
     manager: {
       command: process.execPath,
       args: [path.join(root, "scripts", "mcp-manager.mjs")],
-      env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://localhost:${port}`, MANAGER_KEY: await sessionToken() },
+      env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://127.0.0.1:${port}`, MANAGER_KEY: await managerKey() },
     },
   };
   // Thomas: "should have full access to my pc". It can read any folder and run read-only commands without asking.
@@ -95,7 +95,7 @@ export async function runClaudeCode(
     "--mcp-config", cfgPath, "--strict-mcp-config",
     "--allowedTools", allowed.join(","),
     "--disallowedTools", denied.join(","),
-    "--append-system-prompt-file", writeTemp("manager-system.txt", system),
+    "--append-system-prompt-file", writeTemp(`manager-system-${id}.txt`, system),
     "--add-dir", os.homedir(), // his whole user folder (Documents, Desktop, projects) is readable
 
   ];
@@ -200,6 +200,8 @@ export async function runClaudeCode(
         send({ type: "error", message: `Claude Code stopped (${code}). ${tail || "Is it signed in? Run `claude` once in a terminal."}` });
         await save("failed");
       }
+      // These files hold this run's key and PC permission: remove them once the run ends.
+      for (const f of [cfgPath, path.join(os.tmpdir(), `manager-system-${id}.txt`)]) fs.promises.unlink(f).catch(() => {});
       resolve(id);
     });
   });
