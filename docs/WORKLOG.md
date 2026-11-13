@@ -268,3 +268,12 @@ Thomas pasted an outside review of MyManager (kept in project files: manager/rev
 - **Other repairs:** push approvals are for one exact commit; invoices are numbered from a sequence and claim their hours in one step; Telegram only marks an approval as sent once it really sent, handles one message at a time, and asking the assistant from Telegram works again (it was being refused since the cookie change); briefs only count as fresh when one was really saved, and "" lists the project's top folder; file checks follow links and junctions; open focus sessions stop counting after twice the plan; Up totals say when they're incomplete; database migrations apply all-or-nothing; the built-in database is backed up daily with a tested restore; README updated.
 - **Tests:** `npm test` now also runs tests/review.test.mjs (31 checks in all), using a throwaway database.
 - After updating, nothing to do: the launcher works out the new database key by itself.
+
+## 2026-11-14 · Coders walled off in WSL (the review's "a check, not a sandbox")
+Thomas chose WSL2 for real containment. New `src/lib/sandbox.ts`, switched on with `CODER_SANDBOX=wsl` in `.env.local`:
+- Coders and reviewers run Claude Code inside Ubuntu with its sandbox on. Loop checks run under Anthropic's sandbox runner (`srt`). Both get the same walls: no reading the Windows drive or any keys, writes only to their own copy (plus their branch's git bits), network only to npm, PyPI and GitHub, and nothing from Windows' environment. The guard hook still runs.
+- If it's switched on but broken, nothing runs and Thomas is asked. There's no fallback to unwalled.
+- Worktree `.git` links are rewritten relative so Linux git can follow them.
+- Tests: four new ones, including a real one that checks a sandboxed check can't read a planted fake credential, can't write outside its copy and can't reach other sites, but can still commit (it runs where bwrap, socat and srt are installed). 35 in all.
+- On Thomas's PC: Ubuntu now has socat, Node 22 and Claude Code (installed with his OK). Still to do there: the `srt` install, signing Claude in, and then turning it on.
+

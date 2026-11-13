@@ -19,6 +19,7 @@ See `docs/WORKLOG.md` for the full build log, decisions and what's pending.
 ### Optional extras (all in `.env.local`, restart after changing)
 - `TELEGRAM_BOT_TOKEN`: phone approvals with Approve/Deny buttons, plus texting the assistant. Make a bot with @BotFather, then pair it from the Approvals screen.
 - `UP_TOKEN`: Up Bank balance and spending on Today (Up app → Data sharing → Personal Access Token). Read-only.
+- `CODER_SANDBOX=wsl`: coders, reviewers and loop checks run walled off inside Ubuntu (WSL2) instead of with the guard only. Needs Ubuntu set up as in docs/SAFETY.md; if it isn't working, coding waits and asks you rather than running unwalled.
 - PC control: ask the assistant to do something on your PC; it queues a "Use your PC" approval. Once approved, for 2 hours it can drive desktop apps (agent-desktop) and websites (Playwright). It never types passwords or card numbers.
 
 ## Run against Supabase
