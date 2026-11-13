@@ -291,3 +291,11 @@ test("a sandboxed check can't read home, write outside its copy or reach other s
   assert.equal(fs.readFileSync(path.join(wt, "inside.txt"), "utf8"), "ok\n");
   assert.match(g(repo, "log", "--oneline", "mymanager/t1").stdout, /sandboxed/);
 });
+
+test("the readiness check names exactly the sandbox tools that are missing", () => {
+  const env = { CODER_SANDBOX: "native", PATH: "/usr/bin:/bin", HOME: os.tmpdir() };
+  const missing = ["claude", "bwrap", "socat", "srt", "rg", "git", "node"].filter((t) => spawnSync("bash", ["-lc", `command -v ${t}`], { env }).status !== 0);
+  const r = sbEval(`import { sandboxProblem } from "./src/lib/sandbox.ts"; console.log(JSON.stringify(await sandboxProblem()));`, env);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout), missing.length ? `the sandbox is missing ${missing.join(", ")}` : null);
+});
