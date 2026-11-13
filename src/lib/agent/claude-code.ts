@@ -6,6 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { db } from "@/lib/db";
 import { sessionToken } from "@/lib/auth";
+import { liveRuns } from "@/lib/agent/live";
 import { AGENT_TOOLS } from "./tools";
 import type { AgentEvent } from "./run";
 
@@ -43,6 +44,7 @@ export async function runClaudeCode(
     runId = data.id as string;
   }
   const id = runId!;
+  liveRuns.add(id);
   const send = (e: AgentEvent) => { events.push(e); emit(e); };
   emit({ type: "start", runId: id });
   if (events.length > 1) send({ type: "text", text: `↳ ${goal}` });
@@ -101,12 +103,32 @@ export async function runClaudeCode(
       const argv = isWin ? args.map((a) => (/[\s&()^]/.test(a) ? `"${a}"` : a)) : args;
       child = spawn(bin, argv, { shell: isWin, cwd: os.tmpdir(), env: process.env, stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) {
+      liveRuns.delete(id);
       send({ type: "error", message: `Couldn't start Claude Code: ${String(e)}` });
       void save("failed").then(() => resolve(id));
       return;
     }
     let stderr = "";
     child.stderr.on("data", (d) => { stderr += d.toString(); });
+    // Never sit on "working..." forever: stop if Claude Code goes quiet for 5 minutes or runs past 20.
+    let stopped = "";
+    let lastOut = Date.now();
+    const started = Date.now();
+    const proc = child;
+    const killTree = () => {
+      if (isWin && proc.pid) spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {});
+      else proc.kill("SIGTERM");
+    };
+    const watchdog = setInterval(() => {
+      const quiet = Date.now() - lastOut > 5 * 60_000;
+      const long = Date.now() - started > 20 * 60_000;
+      if (quiet || long) {
+        stopped = quiet ? "It went quiet for 5 minutes, so I stopped it." : "It ran for 20 minutes, so I stopped it.";
+        clearInterval(watchdog);
+        killTree();
+      }
+    }, 15_000);
+    child.stdout.on("data", () => { lastOut = Date.now(); });
     child.stdin.write(goal);
     child.stdin.end();
 
@@ -152,8 +174,13 @@ export async function runClaudeCode(
         : "Claude Code isn't installed on this PC. Install it, sign in, or set AGENT_BACKEND=api with an API key." });
     });
     child.on("close", async (code) => {
+      clearInterval(watchdog);
+      liveRuns.delete(id);
       fs.rm(cfgPath, () => {});
-      if (code === 0 || summary) {
+      if (stopped && !summary) {
+        send({ type: "error", message: `That took too long. ${stopped} Ask again and I'll pick up from here.` });
+        await save("failed");
+      } else if (code === 0 || summary) {
         if (!summary) summary = [...events].reverse().find((e) => e.type === "text")?.["text" as never] ?? "Done.";
         send({ type: "done", summary });
         await save("done");

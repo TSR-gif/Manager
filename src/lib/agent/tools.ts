@@ -25,6 +25,12 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "check_project_activity",
+    description: "See what a project is doing right now on Thomas's PC, read-only: programs running from its folder (tests, data downloads, bots), Windows scheduled tasks that run it, files changed recently (data, results, logs) and the last lines of its newest logs and data files. Use it whenever Thomas asks how a project is tracking, whether its tests or data gathering are still going, or when it'll be done. Starts nothing, stops nothing.",
+    input_schema: { type: "object", properties: { project_name: str }, required: ["project_name"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "create_task",
     description: "Add a task. Use project_name for project work; null for an everyday/personal task (errands, calls, reminders). Keep titles short and action-first.",
     input_schema: {
@@ -163,6 +169,18 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "read_project_file",
+    description: "Read one file (or list a folder) of a project's code, read-only: from its folder on Thomas's PC if linked, otherwise from GitHub. Use \"\" for the top folder. Never reads .env or secret files.",
+    input_schema: { type: "object", properties: { project_name: str, path: str }, required: ["project_name", "path"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "save_project_brief",
+    description: "Save the living brief for a project (markdown with the sections: What it is, How it's built, How to run and test it, Where it lives, Where it's at, Known problems, What's next). It's shown on the project page and read before you act on the project. Don't put Thomas's rules in it; they're kept separately.",
+    input_schema: { type: "object", properties: { project_name: str, brief: str }, required: ["project_name", "brief"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "supervise_project",
     description: "Start supervising work on a project until it's finished. Use when Thomas says something like \"Day trader is doing X, Y and Z, make sure it gets finished\". Breaks it into steps (tasks), then MyManager checks on it regularly on its own, ticks off steps that are really done, and asks Thomas when it needs him (in the app and on his phone). work_dir is the project's folder on his PC if he wants MyManager to do the coding steps itself (that needs his OK once, which this asks for); otherwise null.",
     input_schema: {
@@ -241,15 +259,28 @@ async function did(title: string, undo: Record<string, unknown> | null) {
   try { await db().from("activity").insert({ title, undo }); } catch {}
 }
 
+const squash = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Finds a project by name, loosely: "DayTrader", "day-trader", "the day trader one", "MyManager", the repo or folder name all work. */
 async function findProject(name: string | null): Promise<Project | null> {
   if (!name) return null;
   const projects: Project[] = unwrap(await db().from("projects").select("*"));
-  const key = name.toLowerCase().replace(/\s+/g, "");
+  const key = squash(name).replace(/^(the|my)/, "").replace(/(project|app|one)$/, "");
+  if (!key) return null;
+  const names = (p: Project) => {
+    const lp = (p as { local_path?: string | null }).local_path;
+    return [squash(p.name), squash(p.github_repo?.split("/").pop()), squash(lp?.split(/[\\/]/).filter(Boolean).pop())].filter(Boolean);
+  };
   return (
-    projects.find((p) => p.name.toLowerCase().replace(/\s+/g, "") === key) ??
-    projects.find((p) => p.name.toLowerCase().replace(/\s+/g, "").includes(key)) ??
+    projects.find((p) => names(p).includes(key)) ??
+    projects.find((p) => names(p).some((n) => n.includes(key) || key.includes(n))) ??
+    projects.find((p) => squash(p.name).replace(/^my/, "") === key.replace(/^my/, "")) ??
     null
   );
+}
+
+async function noProject(name: unknown) {
+  const { data } = await db().from("projects").select("name").order("priority");
+  return { label: "Couldn't match that project name", result: `No project matches "${name}". The projects are: ${(data ?? []).map((p: { name: string }) => p.name).join(", ")}. Try again with one of these exact names.`, isError: true };
 }
 
 /** Runs one tool call. Returns text for Claude plus a short label for the UI. */
@@ -258,7 +289,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
     switch (name) {
       case "get_overview": {
         const [projects, tasks, ideas, pending] = await Promise.all([
-          db().from("projects").select("id,name,kind,watch,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at").order("priority"),
+          db().from("projects").select("id,name,kind,watch,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at,rules,brief_updated_at").order("priority"),
           db().from("tasks").select("id,title,status,priority,due,project_id").neq("status", "done").limit(200),
           db().from("ideas").select("id,text").eq("status", "inbox").limit(50),
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
@@ -286,13 +317,27 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
       }
       case "inspect_project": {
         const p = await findProject(input.project_name as string);
-        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        if (!p) return noProject(input.project_name);
         const { inspectProject } = await import("@/lib/inspect");
         return { label: `Looked into ${p.name}`, result: await inspectProject(p) };
       }
+      case "check_project_activity": {
+        let p = await findProject(input.project_name as string);
+        if (!p) return noProject(input.project_name);
+        let dir = (p as { local_path?: string | null }).local_path;
+        if (!dir) {
+          const { linkProjectFolders } = await import("@/lib/local-repos");
+          await linkProjectFolders().catch(() => null);
+          p = (await findProject(p.name)) ?? p;
+          dir = (p as { local_path?: string | null }).local_path;
+        }
+        if (!dir) return { label: `No folder on this PC for ${p.name}`, result: `${p.name} isn't linked to a folder on this PC and none was found automatically. Say you couldn't find its folder, and that he can paste the folder path on the project page (one line). Don't create a task for it.` };
+        const { projectActivity } = await import("@/lib/activity");
+        return { label: `Checked what ${p.name} is doing on your PC`, result: await projectActivity(dir) };
+      }
       case "create_task": {
         const p = await findProject(input.project_name as string | null);
-        if (input.project_name && !p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        if (input.project_name && !p) return noProject(input.project_name);
         const [row] = unwrap(await db().from("tasks").insert({
           title: input.title, project_id: p?.id ?? null, due: input.due ?? null, priority: input.priority ?? 3,
         }).select());
@@ -308,7 +353,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
       }
       case "update_project": {
         const p = await findProject(input.project_name as string);
-        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        if (!p) return noProject(input.project_name);
         const patch: Record<string, unknown> = {};
         for (const k of ["next_action", "goal", "priority", "status", "deadline"]) if (input[k] !== null && input[k] !== undefined) patch[k] = input[k];
         const prev: Record<string, unknown> = {};
@@ -327,7 +372,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
       }
       case "log_time": {
         const p = await findProject(input.project_name as string);
-        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        if (!p) return noProject(input.project_name);
         const minutes = Math.round(Number(input.hours) * 60);
         if (!(minutes > 0)) return { label: "No hours given", result: "Hours must be more than 0.", isError: true };
         const [te] = unwrap(await db().from("time_entries").insert({ project_id: p.id, minutes, note: input.note ?? null, ...(input.date ? { worked_on: input.date } : {}) }).select());
@@ -392,9 +437,22 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         await db().from("campaigns").update({ spend_cents: Math.round(Number(input.spend_dollars) * 100), installs: input.installs, clicks: input.clicks, impressions: input.impressions }).eq("id", c.id);
         return { label: `Updated results for ${c.name}`, result: "Saved." };
       }
+      case "read_project_file": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return noProject(input.project_name);
+        const { readProjectFile } = await import("@/lib/briefs");
+        const text = await readProjectFile(p, String(input.path ?? ""));
+        return { label: `Read ${String(input.path || "the file list")} in ${p.name}`, result: text };
+      }
+      case "save_project_brief": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return noProject(input.project_name);
+        await db().from("projects").update({ brief: String(input.brief).slice(0, 12000), brief_updated_at: new Date().toISOString(), brief_edited_by_you: false }).eq("id", p.id);
+        return { label: `Updated the ${p.name} brief`, result: "Saved. It shows on the project page." };
+      }
       case "supervise_project": {
         const p = await findProject(input.project_name as string);
-        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        if (!p) return noProject(input.project_name);
         const hours = Math.max(0.25, Math.min(24, Number(input.check_every_hours) || 1));
         const workDir = (input.work_dir as string | null) || (p as { local_path?: string | null }).local_path || null;
         const [m] = unwrap(await db().from("missions").insert({

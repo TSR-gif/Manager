@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History, Megaphone, Radar } from "lucide-react";
-import { addTask, requestAction, saveProject, setProjectFolder, toggleWatch } from "@/app/actions";
+import { addTask, requestAction, saveBrief, saveProject, saveRules, setProjectFolder, studyNow, toggleWatch } from "@/app/actions";
+import { Md } from "@/components/md";
 import { Orb } from "@/components/orb";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
@@ -13,7 +14,7 @@ import { DoneBars, HealthChip } from "@/components/health";
 import { db } from "@/lib/db";
 import { monthlyCents } from "@/lib/money";
 import { localState } from "@/lib/local-repos";
-import { FolderGit2 } from "lucide-react";
+import { BookOpen, FolderGit2, ShieldAlert } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,8 @@ export default async function ProjectPage({
     ...(subCost ? [["Costs a month", `$${(subCost / 100).toFixed(0)}`] as [string, string]] : []),
   ];
   const localPath = (p as { local_path?: string | null }).local_path ?? null;
+  const bp = p as Project & { brief?: string | null; brief_updated_at?: string | null; brief_edited_by_you?: boolean; rules?: string | null };
+  const hasCodeHere = !!(p.github_repo || localPath);
   const local = !isNew && localPath ? await localState(localPath) : null;
   const shownStats = statsAll.filter(([k, v]) => k === "Open tasks" || !/^0(h 0m)?$/.test(v));
 
@@ -102,6 +105,57 @@ export default async function ProjectPage({
 
       {p.goal && !isNew && (
         <div className="hero !p-4 text-[15px]"><span className="label mr-2">Goal</span>{p.goal}</div>
+      )}
+
+      {!isNew && (
+        <section className="card">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="kicker flex items-center gap-2"><BookOpen size={13} />What MyManager knows</div>
+            <span className="text-[12px] text-faint">
+              {bp.brief_updated_at ? `written ${ago(bp.brief_updated_at)}${bp.brief_edited_by_you ? ", corrected by you" : ""}` : hasCodeHere ? "not studied yet" : "no code to study"}
+            </span>
+            {hasCodeHere && (
+              <form action={studyNow} className="ml-auto">
+                <input type="hidden" name="id" value={p.id} />
+                <button className="btn !min-h-9 !px-3 !text-[13px]">{bp.brief ? "Study it again" : "Study it now"}</button>
+              </form>
+            )}
+          </div>
+          {bp.brief ? (
+            <details className="group">
+              <summary className="cursor-pointer list-none">
+                <Md text={bp.brief.split(/\n(?=## )/).slice(0, 1).join("")} className="text-[14px] leading-relaxed" />
+                <span className="mt-2 inline-block text-[13px] text-accent group-open:hidden">Show the whole brief</span>
+              </summary>
+              <Md text={bp.brief.split(/\n(?=## )/).slice(1).join("\n")} className="mt-2.5 text-[14px] leading-relaxed" />
+              <details className="mt-3">
+                <summary className="cursor-pointer list-none text-[13px] text-accent">Fix something in it</summary>
+                <form action={saveBrief} className="mt-2 space-y-2">
+                  <input type="hidden" name="id" value={p.id} />
+                  <textarea name="brief" defaultValue={bp.brief} rows={14} className="font-mono !text-[12.5px]" />
+                  <button className="btn">Save brief</button>
+                </form>
+              </details>
+            </details>
+          ) : hasCodeHere ? (
+            <p className="text-[13.5px] text-muted">MyManager will read this project&apos;s code and write down what it is, how it&apos;s built, how to run it, where it&apos;s at and what&apos;s next. It does this on its own within the next few checks, or press Study it now.</p>
+          ) : (
+            <form action={saveBrief} className="space-y-2">
+              <p className="text-[13.5px] text-muted">There&apos;s no code for this one, so tell MyManager what it is, who it&apos;s for, where it&apos;s at and what&apos;s next. It reads this before helping.</p>
+              <input type="hidden" name="id" value={p.id} />
+              <textarea name="brief" rows={5} placeholder={"What it is:\nWhere it's at:\nWhat's next:"} />
+              <button className="btn">Save</button>
+            </form>
+          )}
+          <div className="mt-4 border-t border-line pt-3">
+            <div className="label mb-2 flex items-center gap-1.5"><ShieldAlert size={12} />Your rules for this project</div>
+            <form action={saveRules} className="space-y-2">
+              <input type="hidden" name="id" value={p.id} />
+              <textarea name="rules" defaultValue={bp.rules ?? ""} rows={2} placeholder="e.g. Pretend money only. Never touch the live site on Fridays." />
+              <div className="flex items-center gap-3"><button className="btn">Save rules</button><span className="text-[12px] text-faint">MyManager always follows these and never changes them.</span></div>
+            </form>
+          </div>
+        </section>
       )}
 
       {!isNew && (

@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 interface RunRow { id: string; goal: string; status: string; created_at: string; kind?: string; unread?: boolean; events?: AgentEvent[] }
 
-const KIND_LABEL: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in", mission: "Checked on a supervised job" };
+const KIND_LABEL: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in", mission: "Checked on a supervised job", study: "Studied a project" };
 const AUTONOMY_LABEL: Record<string, string> = { ask: "Asks you first", balanced: "Does small things itself", decide: "Decides for you" };
 
 export default async function AgentPage({ searchParams }: { searchParams: Promise<{ run?: string; ask?: string; voice?: string }> }) {
@@ -22,6 +22,16 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
     run ? db().from("agent_runs").select("id,goal,status,created_at,events").eq("id", run).maybeSingle() : Promise.resolve({ data: null }),
     getSettings(),
   ]);
+  // a run left "working" by a restart or crash: mark it as not finished so the screen doesn't spin forever
+  if (current.data && (current.data as { status: string }).status === "running" && process.env.AGENT_BACKEND !== "api") {
+    const { liveRuns } = await import("@/lib/agent/live");
+    const c = current.data as { id: string; status: string; events: unknown[] };
+    if (!liveRuns.has(c.id)) {
+      c.status = "failed";
+      c.events = [...(c.events ?? []), { type: "error", message: "This one stopped before it finished (MyManager was restarted or it got stuck). Ask again and I'll carry on." }];
+      await db().from("agent_runs").update({ status: "failed", events: c.events }).eq("id", c.id);
+    }
+  }
   const autonomy = (settings as { autonomy?: string }).autonomy ?? "balanced";
   const cur = current.data as RunRow | null;
   if (cur && (runs ?? []).find((r: RunRow) => r.id === cur.id)?.unread) await db().from("agent_runs").update({ unread: false }).eq("id", cur.id);

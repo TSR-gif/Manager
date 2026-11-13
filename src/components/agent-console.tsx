@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, Square, TriangleAlert, Volume2, Wrench } from "lucide-react";
+import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, Square, TriangleAlert, Volume2, Wrench, X } from "lucide-react";
 import { speak, stopSpeaking } from "./speak";
 import type { AgentEvent } from "@/lib/agent/run";
 import { MicButton } from "./mic-button";
@@ -168,14 +168,14 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                 {s.kind === "search" && <div className="flex items-center gap-1.5 text-[13px] text-muted"><Globe size={13} className="text-accent2" /> Searched the web for “{s.query}”</div>}
                 {s.kind === "tool" && (
                   <div className={`flex items-center gap-1.5 text-[13px] ${s.isError ? "text-bad" : s.approval ? "text-warn" : "text-muted"}`}>
-                    {s.approval ? <ShieldCheck size={13} /> : s.done ? <Check size={13} className="text-good" /> : <Wrench size={13} />}
+                    {s.approval ? <ShieldCheck size={13} /> : s.done && s.isError ? <X size={13} className="text-bad" /> : s.done ? <Check size={13} className="text-good" /> : <Wrench size={13} />}
                     {s.label}
                     {s.approval && s.done && !s.isError && <Link href="/approvals" className="ml-1 text-accent">review →</Link>}
                   </div>
                 )}
                 {s.kind === "group" && (
                   <details className="group text-[13px] text-muted">
-                    <summary className="flex cursor-pointer list-none items-center gap-1.5"><Check size={13} className="text-good" /> {s.items.filter((x) => x.kind !== "thinking").map((x) => (x.kind === "tool" ? x.label : x.kind === "search" ? "Searched the web" : "")).filter(Boolean).slice(0, 2).join(" · ") || "Worked it out"}{s.items.length > 2 ? ` +${s.items.length - 2}` : ""} <span className="text-faint group-open:hidden">· show</span></summary>
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5">{s.items.some((x) => x.kind === "tool" && x.isError) && s.items.every((x) => x.kind !== "tool" || x.isError) ? <X size={13} className="text-bad" /> : <Check size={13} className="text-good" />} {s.items.filter((x) => x.kind !== "thinking").map((x) => (x.kind === "tool" ? x.label : x.kind === "search" ? "Searched the web" : "")).filter(Boolean).slice(0, 2).join(" · ") || "Worked it out"}{s.items.length > 2 ? ` +${s.items.length - 2}` : ""} <span className="text-faint group-open:hidden">· show</span></summary>
                     <ul className="mt-1.5 space-y-1 pl-5">
                       {s.items.map((x, j) => <li key={j} className={x.kind === "tool" && x.isError ? "text-bad" : ""}>{x.kind === "tool" ? x.label : x.kind === "search" ? `Searched the web for “${x.query}”` : "Thought it through"}</li>)}
                     </ul>

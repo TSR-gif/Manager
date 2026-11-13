@@ -16,17 +16,18 @@ const sh = (args: string[]) =>
   });
 
 let ghCli: boolean | null = null;
-async function gh<T = unknown>(path: string): Promise<T | null> {
+let ghCliCheckedAt = 0;
+export async function gh<T = unknown>(path: string): Promise<T | null> {
   const token = process.env.GITHUB_TOKEN;
   if (token) {
     try {
       const r = await fetch(`https://api.github.com/${path}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" });
-      return r.ok ? ((await r.json()) as T) : null;
-    } catch { return null; }
+      if (r.ok) return (await r.json()) as T;
+    } catch { /* fall back to the gh sign-in on this PC */ }
   }
-  if (ghCli === false) return null;
+  if (ghCli === false && Date.now() - ghCliCheckedAt < 10 * 60_000) return null;
   const out = await sh(["api", "-X", "GET", path]);
-  if (out === null) { if (ghCli === null) ghCli = (await sh(["api", "user"])) !== null; return null; }
+  if (out === null) { if (ghCli !== true) { ghCli = (await sh(["api", "user"])) !== null; ghCliCheckedAt = Date.now(); } return null; }
   ghCli = true;
   try { return JSON.parse(out) as T; } catch { return null; }
 }
@@ -68,6 +69,8 @@ async function todos(repo: string, branch: string, tree: TreeItem[]) {
 export async function inspectProject(p: Project): Promise<string> {
   const out: string[] = [`# ${p.name}`, `Status: ${p.status}, priority ${p.priority}. Goal: ${p.goal ?? "none set"}. Next step on file: ${p.next_action ?? "none"}.`];
   if (p.notes) out.push(`Notes: ${p.notes}`);
+  const { briefHeader } = await import("@/lib/briefs");
+  out.push(`\n${briefHeader(p as Parameters<typeof briefHeader>[0])}`);
 
   const { data: taskRows } = await db().from("tasks").select("*").eq("project_id", p.id);
   const tasks = (taskRows ?? []) as Task[];
@@ -79,6 +82,7 @@ export async function inspectProject(p: Project): Promise<string> {
 
   const localPath = (p as { local_path?: string | null }).local_path;
   if (localPath) {
+    out.push("Its folder is on this PC: call check_project_activity to see what's running and what changed recently before saying how it's tracking.");
     const { localState, localStateText } = await import("@/lib/local-repos");
     const ls = await localState(localPath);
     out.push(ls ? `\n${localStateText(ls)}` : `\n## On this PC\nFolder ${localPath} isn't a git folder any more (moved or deleted?).`);
@@ -88,7 +92,7 @@ export async function inspectProject(p: Project): Promise<string> {
     const repo = p.github_repo;
     const meta = await gh<{ default_branch: string; pushed_at: string; description: string | null; private: boolean }>(`repos/${repo}`);
     if (!meta) {
-      out.push(`\n## Code (${repo})\nCouldn't read GitHub: ${process.env.GITHUB_TOKEN ? "the token was rejected or can't see this repo" : "not connected (no GitHub token and the GitHub app isn't signed in on this PC)"}. Tell Thomas he can connect it in Settings so you can look at the code.`);
+      out.push(`\n## Code (${repo})\nCouldn't read GitHub just now.${localPath ? " That's fine: use the folder on his PC above (read_project_file, check_project_activity)." : " Work from what you have; don't ask Thomas to connect anything or create a task about it."}`);
     } else {
       const branch = meta.default_branch;
       const [commits, issues, pulls, tree, readme, runs] = await Promise.all([
@@ -119,12 +123,12 @@ export async function inspectProject(p: Project): Promise<string> {
       if (readme?.content) out.push(`README (start):\n${Buffer.from(readme.content, "base64").toString("utf8").slice(0, 2500)}`);
     }
   } else {
-    out.push("\n## Code\nNo GitHub repo is linked to this project in Manager.");
+    out.push(localPath ? "\n## Code\nThe code is in the folder on his PC above (no GitHub repo linked, that's fine)." : "\n## Code\nNo code linked to this project. That's fine for non-code projects; don't ask him to connect anything.");
   }
 
   if (p.vercel_project) {
     const s = (await getSignals([p]))[p.id]?.vercel;
-    out.push(`\n## Website\n${s?.error ? `Couldn't check the live site (${s.error}).` : s?.state ? `Latest live deploy: ${s.state}${s.createdAt ? `, ${ago(s.createdAt)}` : ""}${s.url ? ` (${s.url})` : ""}.` : "No deploys found."}`);
+    out.push(`\n## Website\n${s?.error ? "Couldn't check the live site just now (not important, don't ask Thomas about it)." : s?.state ? `Latest live deploy: ${s.state}${s.createdAt ? `, ${ago(s.createdAt)}` : ""}${s.url ? ` (${s.url})` : ""}.` : "No deploys found."}`);
   }
   return out.join("\n");
 }

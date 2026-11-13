@@ -44,6 +44,9 @@ export async function missionPrompt(m: Mission, answer?: string) {
     .map((s) => `- [${s.status === "done" ? "x" : " "}] ${s.title} (task id ${s.id})`).join("\n") || "- (no steps yet: add them with add_mission_step)";
   const logLines = ((log ?? []) as { kind: string; text: string; created_at: string }[]).reverse()
     .map((l) => `- ${l.created_at.slice(0, 16).replace("T", " ")} ${l.kind}: ${l.text.slice(0, 600)}`).join("\n") || "- (nothing yet)";
+  const { data: proj } = m.project_id ? await db().from("projects").select("*").eq("id", m.project_id).maybeSingle() : { data: null };
+  const { briefHeader } = await import("@/lib/briefs");
+  const know = proj ? `\n${briefHeader(proj)}\n` : "";
   const coding = m.can_code && m.work_dir
     ? `You may do coding steps yourself with run_coding_step (it works in ${m.work_dir} on Thomas's PC, on its own branch, and never pushes). The coder is ${m.worker === "working" ? "busy right now: don't start another, just check back" : "free"}.`
     : m.work_dir
@@ -51,6 +54,7 @@ export async function missionPrompt(m: Mission, answer?: string) {
       : "You can't change the code yourself on this mission. For coding work, write the step clearly so Thomas (or a Claude session he starts) can do it.";
   return `Supervising mission ${m.id} for ${name ?? "an everyday goal"}. Thomas said: "${m.goal}". He wants this seen through to the end. This is check number ${m.checks + 1}; he isn't watching right now.
 ${answer ? `\nTHOMAS JUST ANSWERED YOUR QUESTION ("${m.question ?? ""}"): ${answer}\nAct on his answer first.\n` : ""}
+${know}
 Steps:
 ${stepLines}
 
@@ -163,13 +167,14 @@ export async function startCodingStep(id: string, instructions: string): Promise
   await db().from("missions").update({ worker: "working" }).eq("id", id);
   await logMission(id, "work", `Started: ${instructions}`);
   const branch = `mymanager/${shortId(id)}`;
+  const { data: pr } = m.project_id ? await db().from("projects").select("rules").eq("id", m.project_id).maybeSingle() : { data: null };
   const prompt = `You are doing one step of a bigger job for Thomas, supervised by his MyManager app.
 The job: ${m.goal}
 This step: ${instructions}
 
 Rules:
 - Work on the git branch "${branch}" (create it from the current branch if it doesn't exist). Commit when the step works, with a clear message. Never push, never deploy, never merge into main.
-- Don't touch secrets, .env files, API keys or anything with real money (trading stays on pretend money).
+- Don't touch secrets, .env files, API keys or anything with real money (trading stays on pretend money).${pr?.rules ? `\n- Thomas's rules for this project, always follow them: ${pr.rules}` : ""}
 - Keep the change small and focused on this step. Run the tests if there are any.
 - If you need a decision or something only Thomas can give, stop and ask it.
 End your reply with exactly one line, either "RESULT: done - <one line on what changed>" or "RESULT: stuck - <the one question for Thomas>".`;

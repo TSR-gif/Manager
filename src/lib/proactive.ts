@@ -66,6 +66,8 @@ export async function tick(force?: "brief" | "checkin") {
   if (!force) void import("@/lib/jobs").then((m) => m.runDueJobs()).catch(() => {});
   if (!force) void import("@/lib/missions").then((m) => m.runDueMissions()).catch(() => {});
   // find project folders on this PC now and then (cheap: two levels under the usual places)
+  // keep project briefs fresh: one project per pass, only when missing or the code has moved on
+  if (!force) void import("@/lib/briefs").then((m) => m.refreshDueBriefs()).catch(() => {});
   if (!force && Date.now() - lastFolderScan > 6 * 3600_000) { lastFolderScan = Date.now(); void import("@/lib/local-repos").then((m) => m.linkProjectFolders()).catch(() => {}); }
   if (running) return { skipped: "busy" };
   const { data: s } = await db().from("settings").select("*").eq("id", 1).single();

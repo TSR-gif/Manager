@@ -21,7 +21,7 @@ function inline(text: string, key = 0): React.ReactNode[] {
 }
 
 export function Md({ text, className = "" }: { text: string; className?: string }) {
-  const blocks = text.trim().split(/\n{2,}/);
+  const blocks = text.replace(/^(#{1,4}\s.*)$/gm, "\n$1\n").trim().split(/\n{2,}/);
   return (
     <div className={`space-y-2.5 ${className}`}>
       {blocks.map((b, bi) => {

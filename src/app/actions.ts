@@ -682,3 +682,28 @@ export async function setProjectFolder(form: FormData) {
   await db().from("projects").update({ local_path: str(form, "local_path") }).eq("id", id);
   refresh();
 }
+
+// ---------- project briefs ----------
+export async function saveBrief(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  await db().from("projects").update({ brief: str(form, "brief"), brief_updated_at: new Date().toISOString(), brief_edited_by_you: true }).eq("id", id);
+  refresh();
+}
+
+export async function saveRules(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  await db().from("projects").update({ rules: str(form, "rules") }).eq("id", id);
+  refresh();
+}
+
+/** Study the project now and watch it happen in the assistant screen. */
+export async function studyNow(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const { data: p } = await db().from("projects").select("*").eq("id", id).single();
+  if (!p) return;
+  const { studyGoal } = await import("@/lib/briefs");
+  redirect(`/agent?ask=${encodeURIComponent(studyGoal(p))}`);
+}

@@ -20,6 +20,7 @@ const SECTIONS = [
 export default async function Projects({ searchParams }: { searchParams: Promise<{ found?: string; scanned?: string }> }) {
   const { found, scanned } = await searchParams;
   const [projects, tasks, settings] = await Promise.all([getProjects(), getTasks({ includeDone: true }), getSettings()]);
+  const noCode = projects.filter((x) => x.status !== "done" && !x.github_repo && !(x as { local_path?: string | null }).local_path && !(x as { brief?: string | null }).brief);
   const signals = await getSignals(projects.filter((p) => p.status === "active" || p.status === "paused"));
   const ranked = rankProjects(projects, tasks.filter((t) => t.status !== "done"), signals);
   const rank = new Map(ranked.map((r, i) => [r.project.id, i]));
@@ -39,6 +40,13 @@ export default async function Projects({ searchParams }: { searchParams: Promise
           <Link href="/projects/new" className="btn"><Plus size={16} /> New project</Link>
         </div>
       </header>
+      {noCode.length > 0 && (
+        <div className="card !py-3 text-[13.5px] text-muted">
+          <span className="text-text">MyManager has no code to study for </span>
+          {noCode.map((x, i) => <span key={x.id}>{i > 0 && ", "}<Link href={`/projects/${x.id}`} className="text-accent">{x.name}</Link></span>)}.
+          {" "}Add a few lines about each on its page so it knows what they are.
+        </div>
+      )}
       {found != null && (
         <div className="card !py-3 text-[13.5px] text-muted">
           {Number(found) > 0 ? <>Linked <b className="text-text">{found}</b> project{found === "1" ? "" : "s"} to {found === "1" ? "its folder" : "their folders"} on this PC.</> : <>No new project folders found ({scanned} git folders looked at). You can set a folder on each project&apos;s page.</>}
