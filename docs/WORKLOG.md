@@ -73,3 +73,15 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - America Holiday = USA trip planner, trip was 8–23 Oct 2026 → set to *paused*, next action "export and archive".
 - TradingProgram = empty repo → archived.
 - Seed now carries a goal, next action and notes for every project (`supabase/seed.sql`). Altona Sports Centre, Web Scrapers, NDIS Scanner have no repo: goals are placeholders to fill in.
+
+**05:55–06:15 — Local mode + Claude Code as the brain + assistant front door**
+- Thomas: "build it locally for now", "we can use this ai for testing", "should be able to do anything… maybe even make decisions", "like a personal assistant, a smart one".
+- **One-click local run:** `Start-Manager.bat` (Windows) / `npm run local`. First run writes `.env.local` and creates a built-in database (PGlite in `.localdb/`, PostgREST-compatible shim in `scripts/dev-rest.mjs`) with migrations + seed applied. No Supabase/Vercel needed. Tested from a clean copy.
+- **Brain = Claude Code app on his PC** (`AGENT_BACKEND=claude-code`, default when there's no API key). `src/lib/agent/claude-code.ts` runs `claude -p --output-format stream-json`, gives it Manager's tools through a local MCP bridge (`scripts/mcp-manager.mjs` → `/api/agent/tool`, authed by header), allows web search/fetch, blocks Bash/Edit/Write. Follow-ups resume the same Claude Code session. API backend kept as a swap-in.
+- Tested for real in the dev box: "top 3 projects + add Book car service due tomorrow" → read overview, added the task, correct answer; follow-up remembered context.
+- **Autonomy setting** (migration 0003, `settings.autonomy`): Ask first / Balanced / Decide for me, on the Assistant screen. Injected into the system prompt. Money, signups, messages as him, deletes, redeploys, PC sessions always go to Approvals regardless.
+- **Assistant is the front door:** "Ask me anything" bar on Today, voice input (browser speech recognition, en-AU) there and in the chat box, Agent renamed Assistant, replies render markdown.
+- Fixed: browser opener crash on machines without xdg-open; duplicate summary card.
+- setup.sql regenerated with 0003 (project files copy).
+
+**Research** — Thomas asked if external research is happening. Honest answer: only two searches early on. A dedicated research pass was done in a separate thread: `/mnt/project-files/manager/research/manager-ideas-apps-tools.md` (~30 apps, tools, 16 ranked ideas). Top picks: morning brief on the phone, one-tap phone approvals with a trust ladder, accessibility-tree PC control (agent-desktop / windows-computer-use-mcp) before screenshot clicking, Playwright MCP for web signups, payments stop at the pay step for Thomas to use a disposable card (US agent-card products don't work in AU).

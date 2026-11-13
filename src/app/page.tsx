@@ -8,6 +8,7 @@ import { Empty, ProjectAvatar, SignalChips, TZ, todayISO } from "@/components/ui
 import { FocusTimer } from "@/components/focus-timer";
 import { TaskItem } from "@/components/task-item";
 import { OpenCommandButton } from "@/components/open-command";
+import { AskBar } from "@/components/ask-bar";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,8 @@ export default async function Today() {
           </p>
         </div>
       </header>
+
+      <AskBar />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat icon={<CheckCircle2 size={18} />} label="Done today" value={stats.done} tone="var(--good)" />

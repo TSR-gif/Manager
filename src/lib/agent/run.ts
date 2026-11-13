@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { AGENT_TOOLS, runTool } from "./tools";
+import { runClaudeCode } from "./claude-code";
 
 export const MODEL = "claude-opus-5-5";
 const MAX_TURNS = 25;
@@ -16,7 +17,7 @@ export type AgentEvent =
   | { type: "done"; summary: string }
   | { type: "error"; message: string };
 
-const SYSTEM = `You are Manager, Thomas's personal operator. Thomas is a builder in Melbourne, Australia with many projects (apps, websites, trading tools, a clothing brand idea, etc.) and everyday life admin. You work inside his Manager app, which tracks projects, tasks, ideas and an approval queue.
+const BASE_SYSTEM = `You are Manager, Thomas's personal operator. Thomas is a builder in Melbourne, Australia with many projects (apps, websites, trading tools, a clothing brand idea, etc.) and everyday life admin. You work inside his Manager app, which tracks projects, tasks, ideas and an approval queue.
 
 How to work:
 - Start by calling get_overview when the goal involves his projects or tasks.
@@ -26,11 +27,33 @@ How to work:
 - Prices in AUD. Dates as YYYY-MM-DD.
 - Finish with a short plain-English summary: what you did, what's waiting for his approval, and the single next thing he should do. No headings, under 120 words.`;
 
+const AUTONOMY: Record<string, string> = {
+  ask: "Autonomy: ASK. Before changing anything (tasks, projects, ideas), describe the plan and stop so Thomas can confirm. Research and reading are fine.",
+  balanced: "Autonomy: BALANCED. Make low-stakes, reversible changes yourself (tasks, next actions, ideas, GitHub issues) and decide small things for him. Money, accounts, messages sent as him and anything irreversible go to request_approval.",
+  decide: "Autonomy: DECIDE. Act like a trusted chief of staff: make the calls yourself, pick between options, reprioritise projects, and keep moving without checking in. The only hard stop: money, signups, messages sent as him, deletes, redeploys and PC sessions still go through request_approval.",
+};
+
+export async function systemPrompt() {
+  const { data } = await db().from("settings").select("autonomy").eq("id", 1).maybeSingle();
+  const level = (data?.autonomy as string) ?? "balanced";
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Melbourne" });
+  return `${BASE_SYSTEM}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}`;
+}
+
+/** claude-code = the Claude Code app on this PC (local mode); api = Claude API (needs ANTHROPIC_API_KEY; always on Vercel). */
+export const agentBackend = (): "claude-code" | "api" => {
+  if (process.env.AGENT_BACKEND === "api" || process.env.VERCEL) return "api";
+  if (process.env.AGENT_BACKEND === "claude-code") return "claude-code";
+  return process.env.ANTHROPIC_API_KEY ? "api" : "claude-code";
+};
+
 let client: Anthropic | null = null;
 const anthropic = () => (client ??= new Anthropic());
 
 /** Runs (or continues) an agent conversation, emitting events as it goes and saving them to the DB. */
 export async function runAgent(goal: string, emit: (e: AgentEvent) => void, runId?: string) {
+  const SYSTEM = await systemPrompt();
+  if (agentBackend() === "claude-code") return runClaudeCode(goal, SYSTEM, emit, runId);
   let messages: Anthropic.Beta.BetaMessageParam[] = [];
   let events: AgentEvent[] = [];
   if (runId) {

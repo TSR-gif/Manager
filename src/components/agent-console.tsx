@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, Sparkles, TriangleAlert, Wrench } from "lucide-react";
 import type { AgentEvent } from "@/lib/agent/run";
+import { MicButton } from "./mic-button";
+import { Md } from "./md";
 
 const SUGGESTIONS = [
   "What should I focus on this week? Reprioritise my projects.",
@@ -33,13 +35,17 @@ function toSteps(events: AgentEvent[]): Step[] {
     } else if (e.type === "done") steps.push({ kind: "done", text: e.summary });
     else if (e.type === "error") steps.push({ kind: "error", text: e.message });
   }
-  // the final text is repeated in "done"; drop the duplicate
-  const last = steps.findLast((s) => s.kind === "done") as Extract<Step, { kind: "done" }> | undefined;
-  return last ? steps.filter((s) => !(s.kind === "text" && s.text.trim() === last.text.trim())) : steps;
+  // each turn's final text is repeated in its "done" card; drop the duplicate
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+  return steps.filter((s, i) => {
+    if (s.kind !== "text") return true;
+    const nextDone = steps.slice(i + 1).find((x) => x.kind === "done") as Extract<Step, { kind: "done" }> | undefined;
+    return !(nextDone && norm(nextDone.text).includes(norm(s.text)));
+  });
 }
 
-export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running }: {
-  initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean;
+export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask }: {
+  initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string;
 }) {
   const [events, setEvents] = useState<AgentEvent[]>(initialEvents);
   const [runId, setRunId] = useState(initialRunId);
@@ -49,7 +55,14 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
   const bottom = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  useEffect(() => { setEvents(initialEvents); setRunId(initialRunId); setGoal(initialGoal); }, [initialRunId, initialEvents, initialGoal]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setEvents(initialEvents); setRunId(initialRunId); setGoal(initialGoal); }, [initialRunId]);
+  const newRun = useRef<string | null>(null);
+  const asked = useRef(false);
+  useEffect(() => {
+    if (ask && !asked.current && !initialRunId) { asked.current = true; window.history.replaceState(null, "", "/agent"); void send(ask); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask]);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [events.length]);
 
   async function send(text: string) {
@@ -72,7 +85,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
         for (const l of lines) {
           if (!l.trim()) continue;
           const e = JSON.parse(l) as AgentEvent;
-          if (e.type === "start") { setRunId(e.runId); continue; }
+          if (e.type === "start") { if (!runId) newRun.current = e.runId; setRunId(e.runId); continue; }
           setEvents((prev) => [...prev, e]);
         }
       }
@@ -80,7 +93,8 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
       setEvents((prev) => [...prev, { type: "error", message: String(err) }]);
     } finally {
       setBusy(false);
-      router.refresh();
+      if (newRun.current) { router.replace(`/agent?run=${newRun.current}`); newRun.current = null; }
+      else router.refresh();
     }
   }
 
@@ -94,8 +108,8 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
           <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#9a8bff] to-[#5ec8ff] shadow-[0_12px_30px_-8px_rgba(139,123,255,.8)]">
             <Sparkles size={24} className="text-white" />
           </div>
-          <h2 className="text-[22px] font-semibold tracking-tight">Hand me a goal</h2>
-          <p className="mt-1 max-w-md text-[14px] text-muted">I&apos;ll plan it, do the parts I can (tasks, research, GitHub), and send anything that costs money or acts as you to Approvals first.</p>
+          <h2 className="text-[22px] font-semibold tracking-tight">What can I do for you?</h2>
+          <p className="mt-1 max-w-md text-[14px] text-muted">Ask a question or hand me a job. I plan it, do what I can (tasks, research, GitHub, decisions), and anything that costs money or acts as you goes to Approvals first.</p>
           <div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-2">
             {SUGGESTIONS.map((s) => (
               <button key={s} onClick={() => send(s)} className="card card-hover !p-3 text-left text-[13.5px] text-muted hover:text-text">{s}</button>
@@ -119,7 +133,9 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                     <div className="mt-1 whitespace-pre-wrap text-faint">{s.text}</div>
                   </details>
                 )}
-                {s.kind === "text" && <div className="whitespace-pre-wrap text-[14.5px] leading-relaxed">{s.text}</div>}
+                {s.kind === "text" && (s.text.startsWith("↳ ")
+                  ? <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-panel3 px-4 py-2.5 text-[14.5px]">{s.text.slice(2)}</div>
+                  : <Md text={s.text} className="text-[14.5px] leading-relaxed" />)}
                 {s.kind === "search" && <div className="flex items-center gap-1.5 text-[13px] text-muted"><Globe size={13} className="text-accent2" /> Searched the web for “{s.query}”</div>}
                 {s.kind === "tool" && (
                   <div className={`flex items-center gap-1.5 text-[13px] ${s.isError ? "text-bad" : s.approval ? "text-warn" : "text-muted"}`}>
@@ -129,7 +145,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                   </div>
                 )}
                 {s.kind === "done" && (
-                  <div className="hero !p-4 text-[14.5px] leading-relaxed whitespace-pre-wrap">{s.text}</div>
+                  <div className="hero !p-4"><Md text={s.text} className="text-[14.5px] leading-relaxed" /></div>
                 )}
                 {s.kind === "error" && <div className="flex items-start gap-1.5 text-[13.5px] text-bad"><TriangleAlert size={14} className="mt-0.5" />{s.text}</div>}
               </li>
@@ -151,9 +167,10 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
           <textarea
             value={input} onChange={(e) => setInput(e.target.value)} rows={1}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
-            placeholder={goal ? "Follow up…" : "What do you want done?"}
+            placeholder={goal ? "Follow up…" : "Ask anything, or tell me what to get done…"}
             className="!max-h-40 !min-h-[44px] flex-1 resize-none !border-0 !bg-transparent !shadow-none"
           />
+          <MicButton onText={setInput} />
           <button disabled={busy || !input.trim()} className="btn btn-primary !h-11 !w-11 !p-0 disabled:opacity-40" aria-label="Send">
             {busy ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
           </button>

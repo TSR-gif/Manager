@@ -1,11 +1,45 @@
-// Dev-only: a tiny PostgREST-compatible server over a local Postgres, so the app can be
-// run and screenshotted without a Supabase project. Supports exactly what the app uses.
-// Usage: DATABASE_URL=postgres://... node scripts/dev-rest.mjs   (listens on :3001)
+// Local database server: a tiny PostgREST-compatible API so Manager runs on your own PC
+// with no Supabase account. Supports exactly what the app uses.
+//   node scripts/dev-rest.mjs                 -> built-in database (PGlite) stored in ./.localdb
+//   DATABASE_URL=postgres://... node ...      -> use a real Postgres instead
+// Listens on :3001 (PORT_DB to change).
 import http from "node:http";
-import pg from "pg";
+import fs from "node:fs";
+import path from "node:path";
 
-pg.types.setTypeParser(1082, (v) => v); // keep dates as YYYY-MM-DD like PostgREST
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
+let pool;
+
+async function openDb() {
+  if (process.env.DATABASE_URL) {
+    const pg = (await import("pg")).default;
+    pg.types.setTypeParser(1082, (v) => v); // keep dates as YYYY-MM-DD like PostgREST
+    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    return;
+  }
+  const { PGlite } = await import("@electric-sql/pglite");
+  const dir = path.join(ROOT, ".localdb");
+  const fresh = !fs.existsSync(dir);
+  const db = new PGlite(dir, { parsers: { 1082: (v) => v } });
+  await db.waitReady;
+  pool = { query: (sql, vals) => db.query(sql, vals) };
+  // apply any migrations not yet applied, then seed a brand-new database
+  await db.exec("create table if not exists _local_migrations (name text primary key, applied_at timestamptz default now())");
+  const done = new Set((await db.query("select name from _local_migrations")).rows.map((r) => r.name));
+  const migDir = path.join(ROOT, "supabase", "migrations");
+  for (const f of fs.readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort()) {
+    if (done.has(f)) continue;
+    const sql = fs.readFileSync(path.join(migDir, f), "utf8").replace(/^create extension.*$/gim, "");
+    await db.exec(sql);
+    await db.query("insert into _local_migrations (name) values ($1)", [f]);
+    console.log("applied", f);
+  }
+  if (fresh) {
+    await db.exec(fs.readFileSync(path.join(ROOT, "supabase", "seed.sql"), "utf8"));
+    console.log("seeded your projects");
+  }
+}
+
 const ident = (s) => `"${String(s).replace(/"/g, '""')}"`;
 
 function parseVal(v) {
@@ -65,7 +99,7 @@ async function body(req) {
   return t ? JSON.parse(t) : null;
 }
 
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://x");
     const table = ident(url.pathname.replace(/^\/(rest\/v1\/)?/, ""));
@@ -121,4 +155,8 @@ http.createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ message: String(e.message ?? e) }));
   }
-}).listen(3001, () => console.log("dev-rest on :3001"));
+});
+
+await openDb();
+const PORT = Number(process.env.PORT_DB ?? 3001);
+server.listen(PORT, "127.0.0.1", () => console.log(`Manager database ready on :${PORT}`));

@@ -1,0 +1,62 @@
+// One-step local start: `npm run local` (or double-click Start-Manager.bat on Windows).
+// Starts the built-in database and the app, then opens http://localhost:3000.
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
+const envFile = path.join(ROOT, ".env.local");
+const isWin = process.platform === "win32";
+
+// First run: write a local settings file.
+if (!fs.existsSync(envFile)) {
+  fs.writeFileSync(envFile, [
+    "# Local settings for Manager. Change APP_PASSWORD to whatever you like.",
+    "APP_PASSWORD=manager",
+    `AUTH_SECRET=${crypto.randomBytes(24).toString("hex")}`,
+    "SUPABASE_URL=http://localhost:3001",
+    "SUPABASE_SERVICE_ROLE_KEY=local",
+    "# Agent brain: 'claude-code' uses the Claude Code app already signed in on this PC.",
+    "# Set to 'api' and fill ANTHROPIC_API_KEY to use the Claude API instead.",
+    "AGENT_BACKEND=claude-code",
+    "ANTHROPIC_API_KEY=",
+    "# Optional: live GitHub / Vercel status",
+    "GITHUB_TOKEN=",
+    "VERCEL_TOKEN=",
+    "VERCEL_TEAM_ID=team_IiSZJwc7Mj1Edzz5rQ3gFRBA",
+    "",
+  ].join("\n"));
+  console.log("Created .env.local (login password: manager)");
+}
+
+const run = (cmd, args, name) => {
+  const p = spawn(cmd, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], shell: isWin, env: process.env });
+  const tag = (d) => d.toString().split(/\r?\n/).filter(Boolean).forEach((l) => console.log(`[${name}] ${l}`));
+  p.stdout.on("data", tag);
+  p.stderr.on("data", tag);
+  p.on("exit", (code) => { console.log(`[${name}] stopped (${code})`); process.exit(code ?? 0); });
+  return p;
+};
+
+const db = run(process.execPath, [path.join(ROOT, "scripts", "dev-rest.mjs")], "db");
+// give the database a moment to open/migrate before the app starts
+await new Promise((r) => setTimeout(r, 2500));
+const nextBin = path.join(ROOT, "node_modules", "next", "dist", "bin", "next");
+const app = run(process.execPath, [nextBin, "dev", "-p", "3000"], "app");
+
+setTimeout(() => {
+  const url = "http://localhost:3000";
+  console.log(`\n  Manager is running: ${url}\n`);
+  const opener = isWin ? ["cmd", ["/c", "start", "", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  if (process.env.NO_OPEN) return;
+  try {
+    const o = spawn(opener[0], opener[1], { stdio: "ignore", detached: true });
+    o.on("error", () => console.log("  (Open that address in your browser.)"));
+    o.unref();
+  } catch {}
+}, 6000);
+
+const stop = () => { db.kill(); app.kill(); process.exit(0); };
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);

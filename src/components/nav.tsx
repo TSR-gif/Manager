@@ -5,7 +5,7 @@ import { CalendarCheck, FolderKanban, Lightbulb, ShieldCheck, RefreshCcw, Comman
 
 const items = [
   { href: "/", label: "Today", icon: CalendarCheck },
-  { href: "/agent", label: "Agent", icon: Sparkles },
+  { href: "/agent", label: "Assistant", icon: Sparkles },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/inbox", label: "Ideas", icon: Lightbulb },
   { href: "/approvals", label: "Approvals", icon: ShieldCheck },

@@ -71,6 +71,7 @@ export interface Settings {
   monthly_cap_cents: number;
   focus_minutes: number;
   last_review_at: string | null;
+  autonomy?: "ask" | "balanced" | "decide";
 }
 
 export interface Signals {

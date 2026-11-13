@@ -247,6 +247,12 @@ export async function saveSettings(form: FormData) {
   refresh();
 }
 
+export async function setAutonomy(form: FormData) {
+  const v = str(form, "autonomy");
+  if (v && ["ask", "balanced", "decide"].includes(v)) await db().from("settings").update({ autonomy: v }).eq("id", 1);
+  refresh();
+}
+
 export async function completeReview() {
   await db().from("settings").update({ last_review_at: new Date().toISOString() }).eq("id", 1);
   refresh();
