@@ -30,14 +30,14 @@ export default async function Projects() {
     <div className="fade-in space-y-7">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">Projects</h1>
+          <h1 className="display text-[26px] md:text-[30px]">Projects</h1>
           <p className="mt-1 text-[14px] text-muted">Ranked by what needs you most. {projects.length} total.</p>
         </div>
         <Link href="/projects/new" className="btn"><Plus size={16} /> New project</Link>
       </header>
 
       {over && (
-        <form action={pauseProjects} className="card flex flex-col gap-3 !border-[rgba(255,200,87,.35)] !bg-[rgba(255,200,87,.06)] sm:flex-row sm:items-center">
+        <form action={pauseProjects} className="card flex flex-col gap-3 card-alert sm:flex-row sm:items-center">
           {toPause.map((p) => <input key={p.id} type="hidden" name="id" value={p.id} />)}
           <div className="min-w-0 flex-1 text-[14px]">
             <div className="font-medium">Pause {toPause.map((p) => p.name).join(", ")} for now?</div>
@@ -55,7 +55,7 @@ export default async function Projects() {
         return (
           <section key={status}>
             <div className="mb-3 flex items-baseline gap-2">
-              <h2 className="text-[15px] font-semibold">{title}</h2>
+              <h2 className="kicker !text-muted">{title}</h2>
               <span className="text-[13px] text-faint">{list.length} · {hint}</span>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -90,7 +90,7 @@ export default async function Projects() {
                         {due && <span className={due.tone === "bad" ? "text-bad" : due.tone === "warn" ? "text-warn" : ""}>Due {due.text}</span>}
                       </div>
                       <div className="h-1.5 overflow-hidden rounded-full bg-line">
-                        <div className="h-full rounded-full bg-gradient-to-r from-[#9a8bff] to-[#5ec8ff]" style={{ width: `${pct}%` }} />
+                        <div className="h-full rounded-full bg-gradient-to-r from-[#38bdf8] to-[#818cf8]" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
                     <SignalChips s={signals[p.id]} />

@@ -11,9 +11,9 @@ import { Md } from "./md";
 
 const SUGGESTIONS = [
   "Go see how my Day trader is going and find out what needs to be done.",
-  "What should I focus on this week? Reprioritise my projects.",
-  "Break the PunterIQ launch into tasks for the next 2 weeks.",
-  "Plan my errands for tomorrow and add them as tasks.",
+  "How's everything going across my projects?",
+  "Day trader is doing the backtest fix and the README. See it through and ask me if you need me.",
+  "What should I code next on PunterIQ? Check the repo and list it.",
 ];
 
 type Step =

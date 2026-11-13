@@ -49,7 +49,7 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
       : m.can_code ? { t: "Can do the coding", c: "chip-good" }
       : codeAsked.has(m.id) ? { t: "Coding waits for your OK", c: "chip-warn" } : null;
     return (
-      <li id={m.id} className={`card space-y-3 ${m.status === "waiting" ? "!border-[rgba(255,200,87,.4)]" : ""} ${focus === m.id ? "ring-2 ring-accent/50" : ""}`}>
+      <li id={m.id} className={`card space-y-3 ${m.status === "waiting" ? " card-alert" : ""} ${focus === m.id ? "ring-2 ring-accent/50" : ""}`}>
         <div className="flex items-center gap-2">
           <ProjectAvatar name={pname(m.project_id)} size={22} />
           <span className="text-[13px] font-medium text-muted">{pname(m.project_id)}</span>
@@ -58,7 +58,7 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
         </div>
         <div className="text-[16px] font-semibold leading-snug">{m.goal}</div>
         {m.status === "waiting" && m.question && (
-          <div className="space-y-2 rounded-xl border border-[rgba(255,200,87,.35)] bg-[rgba(255,200,87,.07)] p-3">
+          <div className="space-y-2 rounded-xl border border-[rgba(251,191,36,.35)] bg-[rgba(251,191,36,.07)] p-3">
             <div className="flex gap-2 text-[14px]"><CircleHelp size={16} className="mt-0.5 shrink-0 text-warn" /><span>{m.question}</span></div>
             <form action={answerMissionForm} className="flex gap-2">
               <input type="hidden" name="id" value={m.id} />
@@ -116,7 +116,7 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
   return (
     <div className="fade-in space-y-8">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">Supervise</h1>
+        <h1 className="display text-[26px] md:text-[30px]">Supervise</h1>
         <p className="mt-1 text-[14px] text-muted">Tell {name} what a project is doing. It keeps checking until it&apos;s finished, ticks off the steps, and messages you when it needs you.</p>
       </header>
 
@@ -129,14 +129,14 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
 
       {waiting.length > 0 && (
         <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Waiting on you</h2><span className="text-[13px] text-faint">{waiting.length}</span></div>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Waiting on you</h2><span className="text-[13px] text-faint">{waiting.length}</span></div>
           <ul className="grid gap-3 md:grid-cols-2">{waiting.map((m) => <Card key={m.id} m={m} />)}</ul>
         </section>
       )}
 
       {running.length > 0 && (
         <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Running</h2><span className="text-[13px] text-faint">{running.length}</span></div>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Running</h2><span className="text-[13px] text-faint">{running.length}</span></div>
           <ul className="grid gap-3 md:grid-cols-2">{running.map((m) => <Card key={m.id} m={m} />)}</ul>
         </section>
       )}
@@ -167,7 +167,7 @@ export default async function Supervise({ searchParams }: { searchParams: Promis
 
       {finished.length > 0 && (
         <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Finished</h2><span className="text-[13px] text-faint">{finished.length}</span></div>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Finished</h2><span className="text-[13px] text-faint">{finished.length}</span></div>
           <ul className="grid gap-3 md:grid-cols-2">{finished.map((m) => <Card key={m.id} m={m} />)}</ul>
         </section>
       )}

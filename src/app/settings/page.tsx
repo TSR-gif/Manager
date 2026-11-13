@@ -65,7 +65,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="fade-in mx-auto max-w-3xl space-y-5">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">Settings</h1>
+        <h1 className="display text-[26px] md:text-[30px]">Settings</h1>
         <p className="mt-1 text-[14px] text-muted">Everything here is optional. {name} works without any of it.</p>
       </header>
 
@@ -83,7 +83,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               ["decide", "Decide for me", "Makes the calls and tells you after. Money still needs your OK."],
             ] as const).map(([v, l, d]) => (
               <button key={v} name="autonomy" value={v}
-                className={`rounded-xl border p-3 text-left transition ${autonomy === v ? "border-[rgba(139,123,255,.6)] bg-[rgba(139,123,255,.12)]" : "border-line bg-panel hover:border-line2"}`}>
+                className={`rounded-xl border p-3 text-left transition ${autonomy === v ? "border-[rgba(56,189,248,.6)] bg-[rgba(56,189,248,.12)]" : "border-line bg-panel hover:border-line2"}`}>
                 <div className="flex items-center gap-1.5 text-[14px] font-medium">{autonomy === v && <CheckCircle2 size={15} className="text-accent" />}{l}</div>
                 <div className="mt-1 text-[12.5px] text-muted">{d}</div>
               </button>
@@ -99,7 +99,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               ["more", "More often", "Morning catch-up plus check-ins during the day."],
             ] as const).map(([v, l, d]) => (
               <button key={v} name="mode" value={v}
-                className={`rounded-xl border p-3 text-left transition ${mode === v ? "border-[rgba(139,123,255,.6)] bg-[rgba(139,123,255,.12)]" : "border-line bg-panel hover:border-line2"}`}>
+                className={`rounded-xl border p-3 text-left transition ${mode === v ? "border-[rgba(56,189,248,.6)] bg-[rgba(56,189,248,.12)]" : "border-line bg-panel hover:border-line2"}`}>
                 <div className="flex items-center gap-1.5 text-[14px] font-medium">{mode === v && <CheckCircle2 size={15} className="text-accent" />}{l}</div>
                 <div className="mt-1 text-[12.5px] text-muted">{d}</div>
               </button>

@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 interface RunRow { id: string; goal: string; status: string; created_at: string; kind?: string; unread?: boolean; events?: AgentEvent[] }
 
-const KIND_LABEL: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in" };
+const KIND_LABEL: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in", mission: "Checked on a supervised job" };
 const AUTONOMY_LABEL: Record<string, string> = { ask: "Asks you first", balanced: "Does small things itself", decide: "Decides for you" };
 
 export default async function AgentPage({ searchParams }: { searchParams: Promise<{ run?: string; ask?: string; voice?: string }> }) {
@@ -37,7 +37,7 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
           <div className="flex items-center gap-3.5">
             <Orb size={40} state={cur?.status === "running" ? "working" : "idle"} />
             <div>
-            <h1 className="text-[28px] font-semibold tracking-tight">{name}</h1>
+            <h1 className="display text-[26px] md:text-[30px]">{name}</h1>
             <p className="text-[13.5px] text-muted">
               Your assistant. Ask it anything, or tell it what to do.
             </p>
@@ -51,7 +51,7 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
           <span className="text-accent">Change</span>
         </Link>
         {needsKey && (
-          <div className="card mb-4 text-[13.5px] !border-[rgba(255,200,87,.35)]">
+          <div className="card mb-4 text-[13.5px] card-alert">
             The assistant isn&apos;t switched on in this online copy yet. Use MyManager on your PC for now.
           </div>
         )}

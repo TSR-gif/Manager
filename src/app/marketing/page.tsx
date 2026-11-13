@@ -46,7 +46,7 @@ function Section({ icon, title, count, hint, children, action }: { icon: React.R
     <section>
       <div className="mb-3 flex items-center gap-2">
         <span className="text-accent2">{icon}</span>
-        <h2 className="text-[15px] font-semibold">{title}</h2>
+        <h2 className="kicker !text-muted">{title}</h2>
         {count != null && <span className="text-[13px] text-faint">{count}</span>}
         {action && <span className="ml-auto">{action}</span>}
       </div>
@@ -70,7 +70,7 @@ function JobForm({ j, projectId }: { j?: Partial<Job>; projectId: string }) {
           {DAYS.map((d) => (
             <label key={d} className="cursor-pointer">
               <input type="checkbox" name="days" value={d} defaultChecked={days.includes(d)} className="peer sr-only" />
-              <span className="chip !px-3 !py-1.5 text-[13px] peer-checked:border-[rgba(139,123,255,.5)] peer-checked:bg-[rgba(139,123,255,.18)] peer-checked:text-[#d6d0ff] peer-focus-visible:ring-2 peer-focus-visible:ring-accent">{DAY_SHORT[d]}</span>
+              <span className="chip !px-3 !py-1.5 text-[13px] peer-checked:border-[rgba(56,189,248,.5)] peer-checked:bg-[rgba(56,189,248,.18)] peer-checked:text-[#c7d2fe] peer-focus-visible:ring-2 peer-focus-visible:ring-accent">{DAY_SHORT[d]}</span>
             </label>
           ))}
         </div>
@@ -126,7 +126,7 @@ export default async function Marketing({ searchParams }: { searchParams: Promis
     <div className="fade-in space-y-8">
       <header className="space-y-3">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">Marketing</h1>
+          <h1 className="display text-[26px] md:text-[30px]">Marketing</h1>
           <p className="mt-1 text-[14px] text-muted">Posts, replies and ads for your apps. {name} drafts them; nothing goes out and no money is spent until you say yes.</p>
         </div>
         {choices.length > 1 && (
@@ -161,7 +161,7 @@ export default async function Marketing({ searchParams }: { searchParams: Promis
                 <div className="label mb-2">{d === "any" ? "Any day" : { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" }[d]}</div>
                 <ul className="grid gap-3 md:grid-cols-2">
                   {byDay.get(d)!.map((a) => (
-                    <li key={a.id} className={`card space-y-3 ${a.status === "pending" ? "!border-[rgba(255,200,87,.3)]" : ""}`}>
+                    <li key={a.id} className={`card space-y-3 ${a.status === "pending" ? " card-alert" : ""}`}>
                       <div className="flex items-center gap-2">
                         <span className={`chip ${a.status === "pending" ? "chip-warn" : "chip-good"}`}>{a.status === "pending" ? "Waiting for your OK" : "Approved: ready to post"}</span>
                         <span className="ml-auto text-[12px] text-faint">{ago(a.created_at)}</span>

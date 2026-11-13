@@ -22,7 +22,7 @@ export default async function More() {
   ];
   return (
     <div className="fade-in space-y-4">
-      <h1 className="text-[28px] font-semibold tracking-tight">More</h1>
+      <h1 className="display text-[26px] md:text-[30px]">More</h1>
       <ul className="card divide-y divide-line !p-0">
         {rows.map((r) => (
           <li key={r.href}>

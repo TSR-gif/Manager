@@ -35,7 +35,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     <html lang="en-AU" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="min-h-dvh antialiased">
         <Nav pending={pending} />
-        <main className="mx-auto max-w-[1100px] px-4 pb-32 pt-5 md:pb-12 md:pl-[17rem] md:pr-8 md:pt-8"
+        <main className="mx-auto max-w-[1280px] px-4 pb-32 pt-5 md:pb-14 md:pl-[18rem] md:pr-10 md:pt-8"
           style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}>
           {children}
         </main>

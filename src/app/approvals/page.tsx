@@ -30,16 +30,16 @@ export default async function Approvals() {
   return (
     <div className="fade-in space-y-7">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">Approvals</h1>
+        <h1 className="display text-[26px] md:text-[30px]">Approvals</h1>
         <p className="mt-1 text-[14px] text-muted">Anything that spends money, signs you up or speaks for you waits here for your OK.</p>
       </header>
 
       <section>
-        <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Waiting for you</h2><span className="text-[13px] text-faint">{pending.length}</span></div>
+        <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Waiting for you</h2><span className="text-[13px] text-faint">{pending.length}</span></div>
         {pending.length === 0 && <div className="card"><Empty icon={<ShieldCheck size={18} />} title="Nothing waiting" hint="When the assistant needs your OK, it shows up here (and on your phone if you set that up)." /></div>}
         <ul className="grid gap-3 md:grid-cols-2">
           {pending.map((a) => (
-            <li key={a.id} className="card flex flex-col !border-[rgba(255,200,87,.3)]">
+            <li key={a.id} className="card flex flex-col card-alert">
               <div className="flex items-center gap-2">
                 <span className="chip chip-warn">{kindOf(a.kind).label}</span>
                 {a.cost_cents > 0 && <span className="chip chip-bad">{money(a.cost_cents)}</span>}
@@ -81,7 +81,7 @@ export default async function Approvals() {
 
       {handoff.length > 0 && (
         <section>
-          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Approved: tick off when done</h2><span className="text-[13px] text-faint">{handoff.length}</span></div>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Approved: tick off when done</h2><span className="text-[13px] text-faint">{handoff.length}</span></div>
           <ul className="space-y-2">
             {handoff.map((a) => (
               <li key={a.id} className="card flex flex-col gap-3 md:flex-row md:items-center">

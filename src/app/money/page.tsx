@@ -42,7 +42,7 @@ export default async function MoneyPage() {
   return (
     <div className="fade-in space-y-7">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">Money</h1>
+        <h1 className="display text-[26px] md:text-[30px]">Money</h1>
         <p className="mt-1 text-[14px] text-muted">What you&apos;re owed, what you&apos;ve earned, and what everything costs you each month.</p>
       </header>
 
@@ -70,7 +70,7 @@ export default async function MoneyPage() {
 
       {/* ---------- client jobs ---------- */}
       <section>
-        <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Client jobs</h2><span className="text-[13px] text-faint">{jobs.length}</span></div>
+        <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Client jobs</h2><span className="text-[13px] text-faint">{jobs.length}</span></div>
         {jobs.length === 0 && (
           <div className="card"><Empty icon={<Briefcase size={18} />} title="No client jobs" hint="Mark a project as a client job to track hours and invoices here." /></div>
         )}
@@ -164,9 +164,9 @@ export default async function MoneyPage() {
 
       {/* ---------- subscriptions ---------- */}
       <section>
-        <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Subscriptions</h2><span className="text-[13px] text-faint">{$(perMonth)}/month · {$(perMonth * 12)}/year</span></div>
+        <div className="mb-3 flex items-baseline gap-2"><h2 className="kicker !text-muted">Subscriptions</h2><span className="text-[13px] text-faint">{$(perMonth)}/month · {$(perMonth * 12)}/year</span></div>
         {soon.length > 0 && (
-          <div className="card mb-3 !border-[rgba(255,200,87,.35)] text-[13.5px]">
+          <div className="card mb-3 card-alert text-[13.5px]">
             <b>Renewing this week:</b> {soon.map((s) => `${s.name} (${$(s.amount_cents)} on ${nice(s.next_renewal)})`).join(", ")}
           </div>
         )}

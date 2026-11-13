@@ -46,7 +46,7 @@ export default async function Review() {
   return (
     <div className="fade-in space-y-6">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">Weekly review</h1>
+        <h1 className="display text-[26px] md:text-[30px]">Weekly review</h1>
         <p className="mt-1 text-[14px] text-muted">Last done {ago(settings.last_review_at)}. Ten minutes, once a week, keeps everything else honest.</p>
       </header>
 
@@ -73,7 +73,7 @@ export default async function Review() {
                 <ProjectAvatar name={r.name} size={24} />
                 <span className="w-40 truncate">{r.name}</span>
                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
-                  <div className="h-full rounded-full bg-gradient-to-r from-[#9a8bff] to-[#5ec8ff]" style={{ width: `${(r.n / maxDone) * 100}%` }} />
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#38bdf8] to-[#818cf8]" style={{ width: `${(r.n / maxDone) * 100}%` }} />
                 </div>
                 <span className="w-14 text-right text-muted tabular-nums">{r.n} done</span>
               </li>

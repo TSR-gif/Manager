@@ -15,7 +15,7 @@ export default async function Inbox() {
   return (
     <div className="fade-in space-y-7">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">Ideas</h1>
+        <h1 className="display text-[26px] md:text-[30px]">Ideas</h1>
         <p className="mt-1 max-w-xl text-[14px] text-muted">Get ideas out of your head so they stop pulling you off what matters. Each one gets a decision: make it a project, park it, or kill it.</p>
       </header>
 
@@ -37,7 +37,7 @@ export default async function Inbox() {
           {inbox.map((i) => (
             <li key={i.id} className="card flex flex-col">
               <div className="flex items-start gap-3">
-                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[rgba(255,200,87,.1)] text-warn"><Lightbulb size={16} /></div>
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[rgba(251,191,36,.1)] text-warn"><Lightbulb size={16} /></div>
                 <div className="flex-1 text-[15px] leading-snug">{i.text}</div>
               </div>
               <div className="mt-4 flex items-center gap-2">

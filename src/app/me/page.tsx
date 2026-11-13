@@ -21,7 +21,7 @@ export default async function MePage() {
   return (
     <div className="fade-in space-y-6">
       <header>
-        <h1 className="text-[28px] font-semibold tracking-tight">What {name} knows about you</h1>
+        <h1 className="display text-[26px] md:text-[30px]">What {name} knows about you</h1>
         <p className="mt-1 max-w-2xl text-[14px] text-muted">
           Everything here is given to the assistant every time it works for you. Add anything that helps it decide like you would. Delete anything that&apos;s wrong. It can add facts too when you tell it something worth remembering, and they show up here.
         </p>

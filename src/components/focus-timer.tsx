@@ -26,7 +26,7 @@ export function FocusTimer({ startedAt, minutes, size = 148 }: { startedAt: stri
       <svg width={size} height={size} className="-rotate-90">
         <defs>
           <linearGradient id="fg" x1="0" x2="1" y1="0" y2="1">
-            <stop offset="0%" stopColor="#9a8bff" /><stop offset="100%" stopColor="#5ec8ff" />
+            <stop offset="0%" stopColor="#38bdf8" /><stop offset="100%" stopColor="#818cf8" />
           </linearGradient>
         </defs>
         <circle cx={size / 2} cy={size / 2} r={r} stroke="var(--line)" strokeWidth="7" fill="none" />

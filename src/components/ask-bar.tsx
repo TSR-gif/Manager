@@ -20,17 +20,17 @@ export function AskBar({ name = "MyManager" }: { name?: string }) {
   return (
     <div className="space-y-2">
     <form onSubmit={(e) => { e.preventDefault(); go(q); }}
-      className="flex items-center gap-2 rounded-2xl border border-line2 bg-panel/90 p-2 shadow-[0_20px_50px_-25px_rgba(139,123,255,.6)] focus-within:border-accent">
-      <span className="ml-1"><Orb size={30} /></span>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="What do you need?" aria-label={`Ask ${name}`}
-        className="!h-11 flex-1 !border-0 !bg-transparent !shadow-none text-[15px]" />
+      className="flex items-center gap-2 rounded-xl border border-line2 bg-[#0b0d12] p-1.5 transition focus-within:border-[rgba(56,189,248,.5)] focus-within:shadow-[0_0_0_3px_rgba(56,189,248,.1)]">
+      <span className="ml-1.5"><Orb size={22} /></span>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Ask ${name} anything…`} aria-label={`Ask ${name}`}
+        className="!h-10 flex-1 !border-0 !bg-transparent !px-1 !shadow-none text-[14.5px]" />
       <MicButton onText={setQ} onFinal={(t) => go(t, true)} />
-      <button disabled={!q.trim()} className="btn btn-primary !h-11 !w-11 !p-0 disabled:opacity-40" aria-label="Ask"><ArrowUp size={18} /></button>
+      <button disabled={!q.trim()} className="btn btn-primary !h-10 !w-10 !p-0 disabled:opacity-30" aria-label="Ask"><ArrowUp size={18} /></button>
     </form>
-    <div className="flex gap-2 overflow-x-auto pb-0.5">
+    <div className="scrollbar-none flex gap-1.5 overflow-x-auto pb-0.5">
       {RITUALS.map((r) => (
         <button key={r.label} type="button" onClick={() => go(r.prompt)}
-          className="chip shrink-0 cursor-pointer !px-3.5 !py-2 text-[13px] transition hover:border-accent hover:text-text">
+          className="chip shrink-0 cursor-pointer !rounded-lg !px-3 !py-1.5 text-[12.5px] transition hover:border-line2 hover:bg-panel2 hover:text-text">
           <r.icon size={13} /> {r.label}
         </button>
       ))}

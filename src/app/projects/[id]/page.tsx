@@ -69,7 +69,7 @@ export default async function ProjectPage({
         {!isNew && <ProjectAvatar name={p.name} size={54} />}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-[28px] font-semibold tracking-tight">{isNew ? "New project" : p.name}</h1>
+            <h1 className="display truncate text-[26px] md:text-[30px]">{isNew ? "New project" : p.name}</h1>
             {!isNew && <StatusDot status={p.status} />}
           </div>
           {!isNew && (
@@ -108,7 +108,7 @@ export default async function ProjectPage({
       )}
 
       {cap && (
-        <div className="card flex items-start gap-3 !border-[rgba(255,200,87,.35)]">
+        <div className="card flex items-start gap-3 card-alert">
           <TriangleAlert size={18} className="mt-0.5 text-warn" />
           <div className="text-[14px]">You already have {settings.max_active_projects} active projects. Pause one first, or tick <b>activate anyway</b> below.</div>
         </div>
