@@ -65,7 +65,7 @@ export async function runClaudeCode(
       env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://localhost:${port}`, MANAGER_KEY: await sessionToken() },
     },
   };
-  const allowed = [...AGENT_TOOLS.map((t) => `mcp__manager__${t.name}`), "WebSearch", "WebFetch"];
+  const allowed = [...AGENT_TOOLS.map((t) => `mcp__manager__${t.name}`), "WebSearch", "WebFetch", "Skill"]; // Skill: the Anthropic skills Thomas installed (read-only guidance here)
   const denied = ["Bash", "Edit", "Write", "NotebookEdit", "Task"];
 
   // PC control only while Thomas has an approved "Use your PC" request (approved in the last 2 hours, not marked done).
