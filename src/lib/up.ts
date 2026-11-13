@@ -12,7 +12,6 @@ export interface Money {
   error?: string;
   /** set when the totals are incomplete (Up failed part-way, or too many transactions to fetch) */
   partial?: string;
-  checkedAt?: string;
   balanceCents?: number;
   spent7dCents?: number;
   spent30dCents?: number;
@@ -62,7 +61,7 @@ export async function getMoney(): Promise<Money> {
       cats.set(c, (cats.get(c) ?? 0) + out);
     }
     const topCategories = [...cats.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, cents]) => ({ name: nice(name), cents }));
-    return { configured: true, balanceCents, spent7dCents: spent7d, spent30dCents: spent30d, topCategories, checkedAt: new Date().toISOString(), ...(partial ? { partial } : {}) };
+    return { configured: true, balanceCents, spent7dCents: spent7d, spent30dCents: spent30d, topCategories, ...(partial ? { partial } : {}) };
   } catch (e) {
     return { configured: true, error: `Couldn't reach Up (${e instanceof Error ? e.message : "network"})` };
   }
