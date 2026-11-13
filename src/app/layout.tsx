@@ -7,9 +7,9 @@ import { CommandBar } from "@/components/command-bar";
 import { db } from "@/lib/db";
 
 export const metadata: Metadata = {
-  title: "Manager",
+  title: "MyManager",
   description: "Thomas's command centre",
-  appleWebApp: { capable: true, title: "Manager", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "MyManager", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

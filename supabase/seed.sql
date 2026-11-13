@@ -3,7 +3,7 @@
 insert into projects (name, status, priority, github_repo, vercel_project, goal, next_action, notes) values
  ('Manager', 'active', 1, 'TSR-gif/Manager', 'manager',
   'One app that tells me what to work on and does the busywork for me',
-  'Go live: run setup.sql, add secrets in Vercel, use it daily for a week',
+  'Use Manager every day this week and tell it what gets in your way',
   'This app. Next.js + Supabase on Vercel. Agent runs on Claude.'),
  ('Rewards App', 'active', 2, 'TSR-gif/RewardsApp', 'rewardsapp',
   'Bargie (bargie.app): find Qantas / Everyday Rewards points and grocery savings each week',

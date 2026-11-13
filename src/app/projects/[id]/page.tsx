@@ -146,7 +146,7 @@ export default async function ProjectPage({
 
           {!isNew && (
             <section className="card">
-              <div className="mb-1 flex items-center gap-2"><Send size={16} className="text-accent2" /><span className="font-semibold">Ask Manager to do something</span></div>
+              <div className="mb-1 flex items-center gap-2"><Send size={16} className="text-accent2" /><span className="font-semibold">Ask {(settings as { assistant_name?: string }).assistant_name || "MyManager"} to do something</span></div>
               <p className="mb-3 text-[13px] text-muted">GitHub issues run straight away. Everything else waits for your approval.</p>
               <form action={requestAction} className="space-y-2">
                 <input type="hidden" name="project_id" value={p.id} />

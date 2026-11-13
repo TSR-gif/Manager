@@ -12,7 +12,7 @@ const isWin = process.platform === "win32";
 // First run: write a local settings file.
 if (!fs.existsSync(envFile)) {
   fs.writeFileSync(envFile, [
-    "# Local settings for Manager. Change APP_PASSWORD to whatever you like.",
+    "# Local settings for MyManager. Change APP_PASSWORD to whatever you like.",
     "APP_PASSWORD=manager",
     `AUTH_SECRET=${crypto.randomBytes(24).toString("hex")}`,
     "SUPABASE_URL=http://localhost:3001",
@@ -59,7 +59,7 @@ const app = run(process.execPath, [nextBin, "dev", "-p", "3000"], "app");
 
 setTimeout(() => {
   const url = "http://localhost:3000";
-  console.log(`\n  Manager is running: ${url}\n`);
+  console.log(`\n  MyManager is running: ${url}\n`);
   const opener = isWin ? ["cmd", ["/c", "start", "", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
   if (process.env.NO_OPEN) return;
   try {
@@ -75,12 +75,21 @@ const tickProactive = () => fetch("http://localhost:3000/api/proactive", {
 }).then((r) => r.json()).then((j) => { if (j.kind) console.log(`[assistant] ${j.kind} ${j.quiet ? "(nothing to report)" : "sent"}`); }).catch(() => {});
 setTimeout(() => { tickProactive(); setInterval(tickProactive, 5 * 60_000); }, 60_000);
 
+// Telegram bot: starts when a token is in .env.local. The Settings screen can add one while
+// Manager is running, so check the file every 10 seconds and start/restart/stop the bot to match.
 let bot = null;
-if (env.TELEGRAM_BOT_TOKEN) {
-  setTimeout(() => {
-    bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { MANAGER_URL: "http://localhost:3000", MANAGER_KEY: managerKey } });
-  }, 8000);
-}
+let botToken = "";
+const readToken = () => {
+  try { return (fs.readFileSync(envFile, "utf8").match(/^\s*TELEGRAM_BOT_TOKEN\s*=\s*(\S*)\s*$/m)?.[1] ?? ""); } catch { return botToken; }
+};
+const syncBot = () => {
+  const t = process.env.TELEGRAM_BOT_TOKEN || readToken();
+  if (t === botToken) return;
+  botToken = t;
+  if (bot) { bot.kill(); bot = null; }
+  if (t) bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { TELEGRAM_BOT_TOKEN: t, MANAGER_URL: "http://localhost:3000", MANAGER_KEY: managerKey } });
+};
+setTimeout(() => { syncBot(); setInterval(syncBot, 10_000); }, 8000);
 
 const stop = () => { db.kill(); app.kill(); bot?.kill(); process.exit(0); };
 process.on("SIGINT", stop);

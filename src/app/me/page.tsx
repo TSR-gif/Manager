@@ -16,7 +16,7 @@ export default async function MePage() {
   const { data } = await db().from("memories").select("*").order("created_at", { ascending: false });
   const memories = (data ?? []) as Memory[];
   const { data: s } = await db().from("settings").select("assistant_name").eq("id", 1).single();
-  const name = (s?.assistant_name as string) || "Manager";
+  const name = (s?.assistant_name as string) || "MyManager";
 
   return (
     <div className="fade-in space-y-6">

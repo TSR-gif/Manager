@@ -1,0 +1,36 @@
+import Link from "next/link";
+import { ChevronRight, Lightbulb, RefreshCcw, Settings, ShieldCheck, UserRound } from "lucide-react";
+import { getActions, getIdeas } from "@/lib/queries";
+
+export const dynamic = "force-dynamic";
+
+export default async function More() {
+  const [pending, ideas] = await Promise.all([getActions(["pending"]), getIdeas("inbox")]);
+  const rows = [
+    { href: "/approvals", icon: ShieldCheck, title: "Approvals", sub: "Things waiting for your OK, and a record of everything done", badge: pending.length },
+    { href: "/inbox", icon: Lightbulb, title: "Ideas", sub: "Ideas you've jotted down, ready to sort", badge: ideas.length },
+    { href: "/review", icon: RefreshCcw, title: "Weekly review", sub: "10 minutes to reset your priorities" },
+    { href: "/me", icon: UserRound, title: "About you", sub: "What your assistant knows about you" },
+    { href: "/settings", icon: Settings, title: "Settings", sub: "Phone alerts, bank, spending limits" },
+  ];
+  return (
+    <div className="fade-in space-y-4">
+      <h1 className="text-[28px] font-semibold tracking-tight">More</h1>
+      <ul className="card divide-y divide-line !p-0">
+        {rows.map((r) => (
+          <li key={r.href}>
+            <Link href={r.href} className="flex min-h-[64px] items-center gap-3 px-4 py-3 active:bg-panel2">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-panel3 text-accent"><r.icon size={19} /></div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-medium">{r.title}</div>
+                <div className="truncate text-[12.5px] text-muted">{r.sub}</div>
+              </div>
+              {!!r.badge && <span className="grid h-6 min-w-6 place-items-center rounded-full bg-accent px-2 text-[12px] font-bold text-white">{r.badge}</span>}
+              <ChevronRight size={18} className="text-faint" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

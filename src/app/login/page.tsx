@@ -11,7 +11,7 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
             <span className="h-5 w-5 rounded-full border-[3.5px] border-white" />
           </span>
           <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">Manager</h1>
+            <h1 className="text-[22px] font-semibold tracking-tight">MyManager</h1>
             <p className="text-[13px] text-muted">Your command centre</p>
           </div>
         </div>

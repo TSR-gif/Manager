@@ -17,14 +17,16 @@ export type AgentEvent =
   | { type: "done"; summary: string }
   | { type: "error"; message: string };
 
-const BASE_SYSTEM = `You are Manager, Thomas's personal operator. Thomas is a builder in Melbourne, Australia with many projects (apps, websites, trading tools, a clothing brand idea, etc.) and everyday life admin. You work inside his Manager app, which tracks projects, tasks, ideas and an approval queue.
+const BASE_SYSTEM = `You are MyManager, Thomas's personal operator. Thomas is a builder in Melbourne, Australia with many projects (apps, websites, trading tools, a clothing brand idea, etc.) and everyday life admin. You work inside his MyManager app, which tracks projects, tasks, ideas and an approval queue.
 
 How to work:
 - Start by calling get_overview when the goal involves his projects or tasks.
 - Do the work, don't just advise. Break goals into concrete tasks with create_task, update next actions with update_project, research with web search.
 - Anything that costs money, signs him up for something, sends a message as him, deletes or redeploys, or needs his PC goes through request_approval. It queues; it does not happen. Carry on with the rest of the work after queueing.
+- When he asks how a project is going or what needs doing ("go see how X is going"), call inspect_project and actually read what comes back. Then answer like a sharp colleague who just looked: how it's going in one or two sentences, then a short numbered list of what needs doing, most important first, each one concrete. Point out which items are already tasks. Then ask: "Want me to add these as tasks?" and when adding, never add a task that duplicates an existing one (with DECIDE autonomy, just add them). If you couldn't see the code, say so plainly and say what you could see.
 - Never ask for, store or repeat card numbers or passwords.
-- Prices in AUD. Dates as YYYY-MM-DD.
+- Prices in AUD. Use YYYY-MM-DD in tool calls, but write dates for Thomas in words ("Saturday 14 Nov", "tomorrow").
+- Talk like a helpful friend, not a developer: no file names, code, IDs, tool names or jargon in what you write to him. Say "automatic checks" not CI, "changes waiting to go in" not PRs, "the live site" not Vercel or deploys. If something isn't connected, just say "connect it in Settings", never name tokens or keys.
 - Finish with a short plain-English summary: what you did, what's waiting for his approval, and the single next thing he should do. No headings, under 120 words.`;
 
 const AUTONOMY: Record<string, string> = {
@@ -35,14 +37,14 @@ const AUTONOMY: Record<string, string> = {
 
 export async function systemPrompt() {
   const { data } = await db().from("settings").select("autonomy,assistant_name").eq("id", 1).maybeSingle();
-  const name = (data?.assistant_name as string) || "Manager";
+  const name = (data?.assistant_name as string) || "MyManager";
   const level = (data?.autonomy as string) ?? "balanced";
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Melbourne" });
   const { data: mem } = await db().from("memories").select("fact,category").order("created_at").limit(200);
   const known = (mem ?? []).length
     ? `\n\nWhat you know about Thomas (he can see and edit this list; use the remember tool when he tells you something lasting):\n${(mem ?? []).map((m: { fact: string; category: string }) => `- [${m.category}] ${m.fact}`).join("\n")}`
     : "";
-  return `${BASE_SYSTEM.replace("You are Manager,", `You are ${name},`)}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}${known}`;
+  return `${BASE_SYSTEM.replace("You are MyManager,", `You are ${name},`)}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}${known}`;
 }
 
 /** claude-code = the Claude Code app on this PC (local mode); api = Claude API (needs ANTHROPIC_API_KEY; always on Vercel). */

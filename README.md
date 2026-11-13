@@ -1,4 +1,4 @@
-# Manager
+# MyManager
 
 Thomas's command centre: decides what to work on next, tracks every project and everyday task, and (with approval) takes actions in his tools.
 

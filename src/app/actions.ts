@@ -261,7 +261,7 @@ export async function unpairPhone() {
 export async function saveAssistant(form: FormData) {
   const time = (k: string, d: string) => (/^\d{2}:\d{2}$/.test(str(form, k) ?? "") ? str(form, k)! : d);
   await db().from("settings").update({
-    assistant_name: (str(form, "assistant_name") ?? "Manager").slice(0, 24),
+    assistant_name: (str(form, "assistant_name") ?? "MyManager").slice(0, 24),
     brief_time: time("brief_time", "07:30"),
     quiet_start: time("quiet_start", "21:30"),
     checkin_hours: Math.max(0, Math.min(12, Number(str(form, "checkin_hours") ?? 3))),
@@ -380,4 +380,82 @@ export async function deleteMemory(form: FormData) {
   const id = str(form, "id");
   if (id) await db().from("memories").delete().eq("id", id);
   refresh();
+}
+
+// ---------- guided setup (paste a key in the app instead of editing files) ----------
+const back = (q: string) => redirect(`/settings?${q}`);
+
+export async function connectTelegram(form: FormData) {
+  const { setLocalEnv } = await import("@/lib/local-env");
+  const token = (str(form, "token") ?? "").trim();
+  if (!/^\d+:[\w-]{20,}$/.test(token)) back("err=telegram-format#phone");
+  const api = process.env.TELEGRAM_API ?? "https://api.telegram.org";
+  let name: string | null = null;
+  try {
+    const r = await fetch(`${api}/bot${token}/getMe`, { cache: "no-store" });
+    const j = await r.json();
+    if (j.ok) name = j.result?.username ?? null;
+  } catch {}
+  if (!name) back("err=telegram-rejected#phone");
+  setLocalEnv("TELEGRAM_BOT_TOKEN", token);
+  await db().from("settings").update({ telegram_bot_name: name, telegram_chat_id: null }).eq("id", 1);
+  refresh();
+  back("ok=telegram#phone");
+}
+
+export async function disconnectTelegram() {
+  const { setLocalEnv } = await import("@/lib/local-env");
+  setLocalEnv("TELEGRAM_BOT_TOKEN", "");
+  await db().from("settings").update({ telegram_bot_name: null, telegram_chat_id: null }).eq("id", 1);
+  refresh();
+  back("ok=telegram-off#phone");
+}
+
+export async function connectUp(form: FormData) {
+  const { setLocalEnv } = await import("@/lib/local-env");
+  const token = (str(form, "token") ?? "").trim();
+  if (token.length < 10 || /\s/.test(token)) back("err=up-format#bank");
+  let ok = false;
+  try {
+    const r = await fetch(`${process.env.UP_API ?? "https://api.up.com.au/api/v1"}/util/ping`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    ok = r.ok;
+  } catch {}
+  if (!ok) back("err=up-rejected#bank");
+  setLocalEnv("UP_TOKEN", token);
+  refresh();
+  back("ok=up#bank");
+}
+
+export async function disconnectUp() {
+  const { setLocalEnv } = await import("@/lib/local-env");
+  setLocalEnv("UP_TOKEN", "");
+  refresh();
+  back("ok=up-off#bank");
+}
+
+export async function dismissWelcome() {
+  (await cookies()).set("welcomed", "1", { maxAge: 60 * 60 * 24 * 3650, path: "/", sameSite: "lax" });
+  refresh();
+}
+
+export async function connectGithub(form: FormData) {
+  const { setLocalEnv } = await import("@/lib/local-env");
+  const token = (str(form, "token") ?? "").trim();
+  if (token.length < 20 || /\s/.test(token)) back("err=github-format#code");
+  let ok = false;
+  try {
+    const r = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" });
+    ok = r.ok;
+  } catch {}
+  if (!ok) back("err=github-rejected#code");
+  setLocalEnv("GITHUB_TOKEN", token);
+  refresh();
+  back("ok=github#code");
+}
+
+export async function disconnectGithub() {
+  const { setLocalEnv } = await import("@/lib/local-env");
+  setLocalEnv("GITHUB_TOKEN", "");
+  refresh();
+  back("ok=github-off#code");
 }

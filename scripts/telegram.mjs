@@ -1,6 +1,6 @@
 // Telegram bot for Manager: one-tap Approve/Deny on your phone, quick capture, and asking the assistant.
 // Started by scripts/local.mjs when TELEGRAM_BOT_TOKEN is set. Uses long polling, so no public URL is needed.
-// Pairing: message the bot "/start <pair code>" (code shown on Manager's Approvals screen). Only that chat is obeyed.
+// Pairing: message the bot "/start <pair code>" (code shown in MyManager (Settings, Alerts on your phone)). Only that chat is obeyed.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -25,7 +25,7 @@ const mgr = async (op, extra = {}) => {
   const r = await fetch(`${BASE}/api/bot`, {
     method: "POST", headers: { "Content-Type": "application/json", "x-manager-key": KEY }, body: JSON.stringify({ op, ...extra }),
   });
-  if (!r.ok) throw new Error(`Manager ${r.status}`);
+  if (!r.ok) throw new Error(`MyManager ${r.status}`);
   return r.json();
 };
 
@@ -63,7 +63,7 @@ async function ask(text) {
     method: "POST", headers: { "Content-Type": "application/json", Cookie: `mgr_session=${KEY}` },
     body: JSON.stringify({ goal: text, runId: state.runId ?? undefined }),
   });
-  if (!r.ok || !r.body) throw new Error(`Manager ${r.status}`);
+  if (!r.ok || !r.body) throw new Error(`MyManager ${r.status}`);
   const dec = new TextDecoder();
   let buf = "", summary = "", steps = [];
   for await (const chunk of r.body) {
@@ -95,7 +95,7 @@ async function onMessage(m) {
       await tg("sendMessage", { chat_id: from, text: "Paired ✅ I'll send approvals here.\n\nJust type to ask me anything.\n<b>+ text</b> quick-adds a task (<b>+ #punter text</b> for a project, <b>+ idea: text</b> for an idea).\n/new starts a fresh conversation. /pending lists what's waiting.", parse_mode: "HTML" });
       await notifyPending();
     } else {
-      await tg("sendMessage", { chat_id: from, text: "Send /start followed by the pair code shown on Manager's Approvals screen." });
+      await tg("sendMessage", { chat_id: from, text: "Send /start followed by the pair code shown in MyManager (Settings, Alerts on your phone)." });
     }
     return;
   }

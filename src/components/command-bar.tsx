@@ -46,9 +46,9 @@ export function CommandBar() {
       {!path.startsWith("/agent") && <button
         onClick={() => setOpen(true)}
         aria-label="Quick capture"
-        className="fixed right-4 z-30 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#9a8bff] to-[#7363ff] text-white shadow-[0_12px_30px_-8px_rgba(139,123,255,.8)] active:scale-95 md:hidden"
+        className="fixed right-4 z-30 grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-[#9a8bff] to-[#7363ff] text-white shadow-[0_12px_30px_-8px_rgba(139,123,255,.8)] active:scale-95 md:hidden"
         style={{ bottom: "calc(env(safe-area-inset-bottom) + 76px)" }}>
-        <Plus size={26} />
+        <Plus size={22} />
       </button>}
 
       {flash && (

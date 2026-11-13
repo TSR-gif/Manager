@@ -2,16 +2,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, TriangleAlert, Wrench } from "lucide-react";
+import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, Square, TriangleAlert, Volume2, Wrench } from "lucide-react";
+import { speak, stopSpeaking } from "./speak";
 import type { AgentEvent } from "@/lib/agent/run";
 import { MicButton } from "./mic-button";
 import { Orb } from "./orb";
 import { Md } from "./md";
 
 const SUGGESTIONS = [
+  "Go see how my Day trader is going and find out what needs to be done.",
   "What should I focus on this week? Reprioritise my projects.",
   "Break the PunterIQ launch into tasks for the next 2 weeks.",
-  "Find a good domain and logo tool for the Clothing Brand and price them.",
   "Plan my errands for tomorrow and add them as tasks.",
 ];
 
@@ -29,7 +30,7 @@ function toSteps(events: AgentEvent[]): Step[] {
     if (e.type === "thinking") steps.push({ kind: "thinking", text: e.text });
     else if (e.type === "text") steps.push({ kind: "text", text: e.text });
     else if (e.type === "search") steps.push({ kind: "search", query: e.query });
-    else if (e.type === "tool") steps.push({ kind: "tool", id: e.id, label: e.label, done: false, approval: e.name === "request_approval" });
+    else if (e.type === "tool" && e.name !== "ToolSearch") steps.push({ kind: "tool", id: e.id, label: e.label, done: false, approval: e.name === "request_approval" });
     else if (e.type === "tool_done") {
       const s = steps.find((x) => x.kind === "tool" && x.id === e.id) as Extract<Step, { kind: "tool" }> | undefined;
       if (s) { s.done = true; s.label = e.label; s.isError = e.isError; }
@@ -45,9 +46,11 @@ function toSteps(events: AgentEvent[]): Step[] {
   });
 }
 
-export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, name = "Manager" }: {
-  initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string; name?: string;
+export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, voice, name = "MyManager" }: {
+  initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string; voice?: boolean; name?: string;
 }) {
+  const [speaking, setSpeaking] = useState<number | null>(null);
+  const say = (text: string, i: number) => { if (speak(text, () => setSpeaking(null))) setSpeaking(i); };
   const [events, setEvents] = useState<AgentEvent[]>(initialEvents);
   const [runId, setRunId] = useState(initialRunId);
   const [goal, setGoal] = useState(initialGoal);
@@ -61,12 +64,12 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
   const newRun = useRef<string | null>(null);
   const asked = useRef(false);
   useEffect(() => {
-    if (ask && !asked.current && !initialRunId) { asked.current = true; window.history.replaceState(null, "", "/agent"); void send(ask); }
+    if (ask && !asked.current && !initialRunId) { asked.current = true; window.history.replaceState(null, "", "/agent"); void send(ask, voice); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ask]);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [events.length]);
 
-  async function send(text: string) {
+  async function send(text: string, spoken = false) {
     if (!text.trim() || busy) return;
     setBusy(true);
     setInput("");
@@ -88,6 +91,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
           const e = JSON.parse(l) as AgentEvent;
           if (e.type === "start") { if (!runId) newRun.current = e.runId; setRunId(e.runId); continue; }
           setEvents((prev) => [...prev, e]);
+          if (spoken && e.type === "done") speak(e.summary);
         }
       }
     } catch (err) {
@@ -144,7 +148,13 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                   </div>
                 )}
                 {s.kind === "done" && (
-                  <div className="hero !p-4"><Md text={s.text} className="text-[14.5px] leading-relaxed" /></div>
+                  <div className="hero !p-4">
+                    <Md text={s.text} className="text-[14.5px] leading-relaxed" />
+                    <button type="button" onClick={() => (speaking === i ? (stopSpeaking(), setSpeaking(null)) : say(s.text, i))}
+                      className="mt-3 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-line px-3 text-[12.5px] text-muted hover:text-text">
+                      {speaking === i ? <><Square size={12} /> Stop</> : <><Volume2 size={14} /> Read aloud</>}
+                    </button>
+                  </div>
                 )}
                 {s.kind === "error" && <div className="flex items-start gap-1.5 text-[13.5px] text-bad"><TriangleAlert size={14} className="mt-0.5" />{s.text}</div>}
               </li>
@@ -169,7 +179,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
             placeholder={goal ? "Follow up…" : "Ask anything…"}
             className="!max-h-40 !min-h-[44px] flex-1 resize-none !border-0 !bg-transparent !shadow-none"
           />
-          <MicButton onText={setInput} />
+          <MicButton onText={setInput} onFinal={(t) => send(t, true)} />
           <button disabled={busy || !input.trim()} className="btn btn-primary !h-11 !w-11 !p-0 disabled:opacity-40" aria-label="Send">
             {busy ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
           </button>

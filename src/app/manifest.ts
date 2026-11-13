@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Manager",
-    short_name: "Manager",
+    name: "MyManager",
+    short_name: "MyManager",
     description: "Thomas's command centre",
     start_url: "/",
     display: "standalone",

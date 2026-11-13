@@ -54,7 +54,7 @@ body {
 input, select, textarea {
   background: var(--panel-2); border: 1px solid var(--line); border-radius: .7rem;
   padding: .6rem .8rem; color: var(--text); width: 100%; font-size: 15px;
-  transition: border-color .15s, box-shadow .15s, background .15s;
+  transition: border-color .15s, box-shadow .15s, background .15s; accent-color: var(--accent);
 }
 input::placeholder, textarea::placeholder { color: var(--faint); }
 input:focus, select:focus, textarea:focus {

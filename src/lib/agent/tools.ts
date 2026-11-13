@@ -19,6 +19,12 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "inspect_project",
+    description: "Go and look at how one project is really going: its tasks in Manager, plus (when it has a GitHub repo) recent commits, open issues and pull requests, automated check results, TODO/FIXME notes in the code, whether it has tests, and the README; plus the live website's deploy status. Use this whenever Thomas asks how a project is going, what needs doing, or to check on something. Read only.",
+    input_schema: { type: "object", properties: { project_name: str }, required: ["project_name"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "create_task",
     description: "Add a task. Use project_name for project work; null for an everyday/personal task (errands, calls, reminders). Keep titles short and action-first.",
     input_schema: {
@@ -159,6 +165,12 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           label: "Read your projects and tasks",
           result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}) }),
         };
+      }
+      case "inspect_project": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        const { inspectProject } = await import("@/lib/inspect");
+        return { label: `Looked into ${p.name}`, result: await inspectProject(p) };
       }
       case "create_task": {
         const p = await findProject(input.project_name as string | null);

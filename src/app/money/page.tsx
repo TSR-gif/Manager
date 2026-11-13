@@ -13,16 +13,18 @@ const nice = (d: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateSt
 
 const INV_TONE: Record<string, string> = { draft: "", sent: "chip-warn", paid: "chip-good", void: "" };
 
-function Tile({ icon, label, value, hint, tone }: { icon: React.ReactNode; label: string; value: string; hint?: string; tone: string }) {
-  return (
-    <div className="card flex items-center gap-3 !p-4">
-      <div className="grid h-10 w-10 place-items-center rounded-xl" style={{ background: `color-mix(in srgb, ${tone} 15%, transparent)`, color: tone }}>{icon}</div>
+function Tile({ icon, label, value, hint, tone, href }: { icon: React.ReactNode; label: string; value: string; hint?: string; tone: string; href?: string }) {
+  const body = (
+    <div className={`card flex h-full items-center gap-3 !p-4 ${href ? "card-hover" : ""}`}>
+      <div className="hidden h-10 w-10 shrink-0 place-items-center rounded-xl sm:grid" style={{ background: `color-mix(in srgb, ${tone} 15%, transparent)`, color: tone }}>{icon}</div>
       <div className="min-w-0">
-        <div className="text-[21px] font-semibold leading-none tabular-nums">{value}</div>
-        <div className="mt-1 truncate text-[12px] text-muted">{label}{hint ? <span className="text-faint"> · {hint}</span> : null}</div>
+        <div className="text-[21px] font-semibold leading-none tabular-nums" style={href ? { color: tone } : undefined}>{value}</div>
+        <div className="mt-1.5 text-[12.5px] text-muted">{label}</div>
+        {hint && <div className="truncate text-[12px] text-faint">{hint}</div>}
       </div>
     </div>
   );
+  return href ? <Link href={href}>{body}</Link> : body;
 }
 
 export default async function MoneyPage() {
@@ -47,10 +49,10 @@ export default async function MoneyPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile icon={<BadgeDollarSign size={19} />} label="Owed to you" value={$(owed)} hint={overdue ? `${$(overdue)} overdue` : undefined} tone={overdue ? "var(--bad)" : "var(--good)"} />
         <Tile icon={<Clock size={19} />} label="Not invoiced" value={$(unbilled)} tone="var(--warn)" />
-        <Tile icon={<Repeat size={19} />} label="Subs / month" value={$(perMonth)} hint={`${live.length} active`} tone="var(--accent)" />
+        <Tile icon={<Repeat size={19} />} label="Subscriptions a month" value={$(perMonth)} hint={`${live.length} active`} tone="var(--accent)" />
         {up.configured && !up.error
-          ? <Tile icon={<Wallet size={19} />} label="Up balance" value={$(up.balanceCents ?? 0)} hint={`${$(up.spent30dCents ?? 0)} spent 30d`} tone="var(--accent-2)" />
-          : <Tile icon={<Wallet size={19} />} label="Bank" value="—" hint={up.configured ? up.error : "not connected"} tone="var(--muted)" />}
+          ? <Tile icon={<Wallet size={19} />} label="Bank balance" value={$(up.balanceCents ?? 0)} hint={`${$(up.spent30dCents ?? 0)} spent 30d`} tone="var(--accent-2)" />
+          : <Tile icon={<Wallet size={19} />} label={up.configured ? "Bank" : "Connect your bank"} value={up.configured ? "—" : "Set up"} hint={up.configured ? up.error : "Up only, read only"} tone="var(--accent)" href="/settings#bank" />}
       </div>
 
       {/* ---------- client jobs ---------- */}
