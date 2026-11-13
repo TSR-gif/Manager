@@ -44,7 +44,9 @@ function run(cmd: string, args: string[], ms = 60_000) {
 /** A bash command line inside the sandbox's Linux, with nvm's node on PATH and nothing from Windows' environment. */
 function shell(script: string): [string, string[]] {
   const body = `source ~/.nvm/nvm.sh >/dev/null 2>&1; ${script}`;
-  return sandboxMode() === "wsl" ? ["wsl.exe", ["-d", DISTRO(), "--", "bash", "-lc", body]] : ["bash", ["-lc", body]];
+  // --exec runs bash directly: with "--" WSL hands the line to the distro's login shell first, which expands $PATH
+  // and the rest before nvm is loaded (found testing on Thomas's PC).
+  return sandboxMode() === "wsl" ? ["wsl.exe", ["-d", DISTRO(), "--exec", "bash", "-lc", body]] : ["bash", ["-lc", body]];
 }
 
 let ready: { at: number; problem: string | null } | null = null;
@@ -52,7 +54,7 @@ let ready: { at: number; problem: string | null } | null = null;
 export async function sandboxProblem(): Promise<string | null> {
   if (sandboxMode() === "off") return null;
   if (ready && Date.now() - ready.at < 10 * 60_000) return ready.problem;
-  const [cmd, args] = shell("for t in claude bwrap socat srt git node; do command -v $t >/dev/null || echo MISSING:$t; done; echo CHECKED");
+  const [cmd, args] = shell("for t in claude bwrap socat srt rg git node; do command -v $t >/dev/null || echo MISSING:$t; done; echo CHECKED");
   const r = await run(cmd, args);
   const missing = [...r.out.matchAll(/MISSING:(\w+)/g)].map((m) => m[1]);
   const problem = !r.out.includes("CHECKED") ? `the ${sandboxMode() === "wsl" ? `WSL distro "${DISTRO()}"` : "sandbox"} didn't answer (${r.out.slice(0, 160)})`
@@ -149,7 +151,8 @@ export function relativeGitLink(workDir: string): string | null {
   const rel = path.relative(workDir, target);
   if (path.isAbsolute(rel)) return `the copy and the project are on different drives (${target}), so WSL can't follow it`;
   const want = `gitdir: ${rel.replace(/\\/g, "/")}\n`;
-  if (text !== want) fs.writeFileSync(file, want);
+  // Windows' git marks this file hidden, and Node can't replace a hidden file, only overwrite it in place.
+  if (text !== want) { fs.truncateSync(file); fs.writeFileSync(file, want, { flag: "r+" }); }
   return null;
 }
 

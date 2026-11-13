@@ -24,7 +24,7 @@ That's what the sandbox is for (`src/lib/sandbox.ts`). With `CODER_SANDBOX=wsl` 
 - The file tools (Read/Edit/Write) are kept off MyManager's folder, Documents, AppData and key folders, and the guard still runs as a hook.
 - If the sandbox is switched on but not working (a tool missing, WSL not answering, the copy on another drive), nothing runs, and MyManager asks Thomas. It never quietly falls back to running unsandboxed.
 
-`CODER_SANDBOX=native` does the same on Linux or macOS without WSL. Unset means the guard only. Ubuntu needs `bubblewrap`, `socat`, `git`, Node (via nvm), `@anthropic-ai/claude-code` (signed in) and `@anthropic-ai/sandbox-runtime`. `npm test` checks the walls for real wherever bwrap, socat and srt are installed.
+`CODER_SANDBOX=native` does the same on Linux or macOS without WSL. Unset means the guard only. Ubuntu needs `bubblewrap`, `socat`, `ripgrep`, `git`, Node (via nvm), `@anthropic-ai/claude-code` (signed in) and `@anthropic-ai/sandbox-runtime`. `npm test` checks the walls for real wherever bwrap, socat and srt are installed.
 
 ## What leaves the PC
 - **To Anthropic (through the Claude Code app or the API):** the assistant's prompt, which includes project names, briefs, rules, open tasks, recent activity, files it reads from project folders and command output it runs. Never .env or key files.
