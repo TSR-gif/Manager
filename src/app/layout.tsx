@@ -60,8 +60,9 @@ async function shellData() {
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { pending, helpers, other, projects } = await shellData();
   return (
-    <html lang="en-AU" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body className="min-h-dvh antialiased">
+    // Browser extensions (LanguageTool, Grammarly) add attributes to <html>/<body> before React loads; that is not a real mismatch.
+    <html lang="en-AU" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
+      <body className="min-h-dvh antialiased" suppressHydrationWarning>
         <div className="app">
           <Nav pending={pending} helpers={helpers} other={other} />
           <main className="mainwrap"><DefaultHead />{children}</main>
