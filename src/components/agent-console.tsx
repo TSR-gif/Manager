@@ -9,6 +9,11 @@ import { MicButton } from "./mic-button";
 import { Orb } from "./orb";
 import { Md } from "./md";
 
+const EMBED_SUGGESTIONS = [
+  "What needs me today?",
+  "How's everything going across my projects?",
+  "Remind me to ",
+];
 const SUGGESTIONS = [
   "Go see how my Day trader is going and find out what needs to be done.",
   "How's everything going across my projects?",
@@ -76,8 +81,10 @@ function toSteps(events: AgentEvent[]): Step[] {
   });
 }
 
-export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, voice, name = "MyManager" }: {
+/** `embedded` is the assistant bubble: it stays on the page he's on, takes asks through `incoming`, and reports back so the bubble can show it's busy or has an answer. */
+export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, voice, name = "MyManager", embedded = false, incoming, onRun, onBusy, onAnswer }: {
   initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string; voice?: boolean; name?: string;
+  embedded?: boolean; incoming?: { text: string; voice?: boolean; n: number }; onRun?: (id: string) => void; onBusy?: (busy: boolean) => void; onAnswer?: () => void;
 }) {
   const [speaking, setSpeaking] = useState<number | null>(null);
   const say = (text: string, i: number) => { if (speak(text, () => setSpeaking(null))) setSpeaking(i); };
@@ -89,19 +96,33 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
   const bottom = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setEvents(initialEvents); setRunId(initialRunId); setGoal(initialGoal); }, [initialRunId]);
+  // a different conversation was opened: show it. (Not on first mount: state already starts from the props, and
+  // re-running it there would wipe an ask that's just been sent.)
+  const shownRun = useRef(initialRunId);
+  useEffect(() => {
+    if (shownRun.current === initialRunId) return;
+    shownRun.current = initialRunId;
+    setEvents(initialEvents); setRunId(initialRunId); setGoal(initialGoal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRunId]);
   const newRun = useRef<string | null>(null);
   const asked = useRef(false);
   useEffect(() => {
-    if (ask && !asked.current && !initialRunId) { asked.current = true; window.history.replaceState(null, "", "/agent"); void send(ask, voice); }
+    if (ask && !asked.current && !initialRunId && !embedded) { asked.current = true; window.history.replaceState(null, "", "/agent"); void send(ask, voice); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ask]);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [events.length]);
+  // an ask typed into a page's ask box, or a quick button, arrives here when the bubble is open
+  const lastIncoming = useRef(0);
+  useEffect(() => {
+    if (incoming && incoming.n !== lastIncoming.current) { lastIncoming.current = incoming.n; void send(incoming.text, incoming.voice); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming?.n]);
 
   async function send(text: string, spoken = false) {
     if (!text.trim() || busy) return;
     setBusy(true);
+    onBusy?.(true);
     setInput("");
     if (!runId) { setGoal(text); setEvents([]); }
     try {
@@ -119,8 +140,9 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
         for (const l of lines) {
           if (!l.trim()) continue;
           const e = JSON.parse(l) as AgentEvent;
-          if (e.type === "start") { if (!runId) newRun.current = e.runId; setRunId(e.runId); continue; }
+          if (e.type === "start") { if (!runId) newRun.current = e.runId; setRunId(e.runId); onRun?.(e.runId); continue; }
           setEvents((prev) => [...prev, e]);
+          if (e.type === "done") onAnswer?.();
           if (spoken && e.type === "done") speak(e.summary);
         }
       }
@@ -128,7 +150,9 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
       setEvents((prev) => [...prev, { type: "error", message: String(err) }]);
     } finally {
       setBusy(false);
-      if (newRun.current) { router.replace(`/agent?run=${newRun.current}`); newRun.current = null; }
+      onBusy?.(false);
+      if (embedded) { newRun.current = null; router.refresh(); } // stay on his page; refresh it in case the answer changed something here
+      else if (newRun.current) { router.replace(`/agent?run=${newRun.current}`); newRun.current = null; }
       else router.refresh();
     }
   }
@@ -139,20 +163,20 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
   const empty = !goal && steps.length === 0;
 
   return (
-    <div className="flex min-h-[70dvh] flex-col">
+    <div className={`flex flex-col ${embedded ? "min-h-full" : "min-h-[70dvh]"}`}>
       {empty ? (
-        <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
-          <div className="mb-4 hidden sm:block"><Orb size={64} /></div>
+        <div className={`flex flex-1 flex-col items-center justify-center text-center ${embedded ? "px-1 py-6" : "py-10"}`}>
+          <div className={`mb-4 ${embedded ? "" : "hidden sm:block"}`}><Orb size={embedded ? 48 : 64} /></div>
           <h2 className="text-[19px] font-semibold tracking-tight sm:text-[22px]">Hi, I&apos;m {name}. What can I do for you?</h2>
           <p className="mt-1 max-w-md text-[14px] text-muted">Ask a question or hand me a job. I plan it, do what I can (tasks, research, GitHub, decisions), and anything that costs money or acts as you goes to Approvals first.</p>
-          <div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-2">
-            {SUGGESTIONS.map((s) => (
-              <button key={s} onClick={() => send(s)} className="card card-hover !p-3 text-left text-[13.5px] text-muted hover:text-text">{s}</button>
+          <div className={`mt-6 grid w-full max-w-2xl gap-2 ${embedded ? "" : "sm:grid-cols-2"}`}>
+            {(embedded ? EMBED_SUGGESTIONS : SUGGESTIONS).map((s) => (
+              <button key={s} onClick={() => (s.endsWith(" ") ? setInput(s) : send(s))} className="card card-hover !p-3 text-left text-[13.5px] text-muted hover:text-text">{s}</button>
             ))}
           </div>
         </div>
       ) : (
-        <div className="flex-1 space-y-3 pb-28 md:pb-24">
+        <div className={`flex-1 space-y-3 ${embedded ? "pb-4 pt-1" : "pb-28 md:pb-24"}`}>
           {goal && (
             <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-panel3 px-4 py-2.5 text-[14.5px]">{goal}</div>
           )}
@@ -224,10 +248,11 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
       )}
 
       <form onSubmit={(e) => { e.preventDefault(); send(input); }}
-        className="sticky bottom-[84px] z-10 md:bottom-4">
-        <div className="flex items-end gap-2 rounded-2xl border border-line2 bg-panel/95 p-2 shadow-2xl backdrop-blur-xl focus-within:border-accent">
+        className={`sticky z-10 ${embedded ? "bottom-0 bg-bg pb-3 pt-1" : "bottom-[84px] md:bottom-4"}`}>
+        <div className={`flex items-end gap-2 rounded-2xl border border-line2 bg-panel/95 p-2 backdrop-blur-xl focus-within:border-accent ${embedded ? "shadow-sm" : "shadow-2xl"}`}>
           <textarea
             value={input} onChange={(e) => setInput(e.target.value)} rows={1}
+            autoFocus={embedded && window.matchMedia("(min-width: 768px)").matches}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
             placeholder={goal ? "Follow up…" : "Ask anything…"}
             className="!max-h-40 !min-h-[44px] flex-1 resize-none !border-0 !bg-transparent !shadow-none"

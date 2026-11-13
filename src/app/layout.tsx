@@ -4,6 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { DefaultHead, Nav, type HelperItem } from "@/components/nav";
 import { CommandBar } from "@/components/command-bar";
+import { AssistantBubble } from "@/components/assistant-bubble";
 import { UsageLog } from "@/components/usage-log";
 import { db } from "@/lib/db";
 import { helperLook } from "@/lib/helper-look";
@@ -68,6 +69,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           <main className="mainwrap"><DefaultHead />{children}</main>
         </div>
         <CommandBar projects={projects} />
+        <AssistantBubble />
         <UsageLog />
         <script
           dangerouslySetInnerHTML={{

@@ -6,11 +6,11 @@ import { TZ, todayISO } from "@/components/ui";
 // Read-only data for the Today screen and the helper pages: what needs Thomas, what's being worked on, what got done.
 
 export type Ask = { id: string; project_id: string | null; question: string | null; goal: string };
-export type WaitingStep = { runbook: string; runbookId: string; project_id: string | null; stepId: string; label: string; handoff: boolean };
+export type WaitingStep = { runbook: string; runbookId: string; project_id: string | null; stepId: string; label: string; handoff: boolean; note?: string; url?: string };
 export type Work = { key: string; href: string; project_id: string | null; title: string; sub: string; pct: number | null; kind: "mission" | "runbook" | "helper" };
 export type Done = { id: string; title: string; undo: unknown; undone: boolean; created_at: string };
 
-type RbStep = { id: string; label: string; status: string; kind: string; approval_id?: string | null; optional?: boolean };
+type RbStep = { id: string; label: string; status: string; kind: string; approval_id?: string | null; optional?: boolean; note?: string; url?: string };
 type Rb = { id: string; title: string; status: string; last_update: string | null; project_id: string | null; steps: { list: RbStep[] } };
 
 export function dayStartISO() {
@@ -36,7 +36,7 @@ export async function todayData(projectId?: string) {
   const asks: Ask[] = missions.filter((m) => m.status === "waiting").map((m) => ({ id: m.id, project_id: m.project_id, question: m.question, goal: m.goal }));
   const steps: WaitingStep[] = runbooks.flatMap((r) => (r.steps?.list ?? [])
     .filter((s) => s.status === "waiting" && !s.approval_id)
-    .map((s) => ({ runbook: r.title, runbookId: r.id, project_id: r.project_id, stepId: s.id, label: s.label, handoff: s.kind === "handoff" })));
+    .map((s) => ({ runbook: r.title, runbookId: r.id, project_id: r.project_id, stepId: s.id, label: s.label, handoff: s.kind === "handoff", note: s.note, url: s.url && /^https:\/\//.test(s.url) ? s.url : undefined })));
 
   // progress: ticked-off steps of each mission
   const ids = missions.filter((m) => m.status === "running").map((m) => m.id);

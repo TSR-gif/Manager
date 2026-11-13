@@ -1,4 +1,5 @@
 import "server-only";
+import { vercelAuth } from "@/lib/vercel-auth";
 import type { Project, Signals } from "./types";
 
 const VERCEL_API = "https://api.vercel.com";
@@ -22,9 +23,9 @@ async function github(repo: string): Promise<Signals["github"]> {
 }
 
 async function vercel(project: string): Promise<Signals["vercel"]> {
-  const token = process.env.VERCEL_TOKEN;
-  if (!token) return { state: null, url: null, createdAt: null, error: "VERCEL_TOKEN not set" };
-  const team = process.env.VERCEL_TEAM_ID ? `&teamId=${process.env.VERCEL_TEAM_ID}` : "";
+  const { token, teamId } = vercelAuth();
+  if (!token) return { state: null, url: null, createdAt: null, error: "not signed in" };
+  const team = teamId ? `&teamId=${encodeURIComponent(teamId)}` : "";
   try {
     const res = await fetch(
       `${VERCEL_API}/v6/deployments?app=${encodeURIComponent(project)}&target=production&limit=1${team}`,

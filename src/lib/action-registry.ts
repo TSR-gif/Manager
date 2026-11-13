@@ -1,5 +1,6 @@
 import "server-only";
 import type { Action } from "./types";
+import { vercelAuth } from "@/lib/vercel-auth";
 
 /**
  * Every capability the Manager (or its Claude agent) can use is declared here.
@@ -34,8 +35,10 @@ async function ghCreateIssue(a: Action) {
 
 async function vercelRedeploy(a: Action) {
   const { project } = a.payload as { project: string };
-  const team = process.env.VERCEL_TEAM_ID ? `teamId=${process.env.VERCEL_TEAM_ID}` : "";
-  const headers = { Authorization: `Bearer ${process.env.VERCEL_TOKEN}`, "Content-Type": "application/json" };
+  const auth = vercelAuth();
+  if (!auth.token) throw new Error("MyManager isn't signed in to Vercel on this PC yet");
+  const team = auth.teamId ? `teamId=${encodeURIComponent(auth.teamId)}` : "";
+  const headers = { Authorization: `Bearer ${auth.token}`, "Content-Type": "application/json" };
   const list = await fetch(
     `https://api.vercel.com/v6/deployments?app=${encodeURIComponent(project)}&target=production&limit=1&${team}`,
     { headers },

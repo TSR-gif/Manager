@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUp, Mic } from "lucide-react";
+import { ASK_EVENT, type AskDetail } from "./assistant-bubble";
 
 const QUICK: [string, string][] = [
   ["☀️ Plan my day", "Plan my day"],
@@ -27,6 +28,10 @@ export function AskBar({ name = "MyManager", placeholder, about, quick = false }
   const go = (text: string, voice = false) => {
     const t = text.trim();
     if (!t) return;
+    const text2 = about ? `About ${about}: ${t}` : t;
+    // the assistant bubble answers it right here; without one, go to the chat page
+    const handled = !window.dispatchEvent(new CustomEvent<AskDetail>(ASK_EVENT, { detail: { text: text2, voice }, cancelable: true }));
+    if (handled) { setQ(""); return; }
     router.push(`/agent?ask=${encodeURIComponent(about ? `About ${about}: ${t}` : t)}${voice ? "&voice=1" : ""}`);
   };
   useEffect(() => {
