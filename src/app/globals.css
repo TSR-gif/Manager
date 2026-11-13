@@ -107,6 +107,7 @@ input:focus, select:focus, textarea:focus {
   padding: .18rem .55rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
   background: rgba(255,255,255,.02); white-space: nowrap;
 }
+.chip-accent2 { color: #9fe0ff; border-color: rgba(94,200,255,.35); background: rgba(94,200,255,.10); }
 .chip-accent { color: #c3baff; border-color: rgba(139,123,255,.35); background: rgba(139,123,255,.10); }
 .chip-good { color: #7ff0bf; border-color: rgba(61,220,151,.3); background: rgba(61,220,151,.08); }
 .chip-warn { color: #ffd98a; border-color: rgba(255,200,87,.3); background: rgba(255,200,87,.08); }

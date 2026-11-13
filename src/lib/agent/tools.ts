@@ -13,7 +13,7 @@ const nstr = { type: ["string", "null"] } as const;
 export const AGENT_TOOLS: Tool[] = [
   {
     name: "get_overview",
-    description: "Get Thomas's current state: every project (status, priority, next action, repo), open tasks, ideas inbox and pending approvals. Call this first for any goal that touches his projects or tasks.",
+    description: "Get Thomas's current state: every project (kind: app he builds / client = paid job for someone / personal, status, priority, next action, repo), open tasks, ideas inbox and pending approvals. Call this first for any goal that touches his projects or tasks.",
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
     strict: true,
   },
@@ -113,7 +113,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
     switch (name) {
       case "get_overview": {
         const [projects, tasks, ideas, pending] = await Promise.all([
-          db().from("projects").select("id,name,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at").order("priority"),
+          db().from("projects").select("id,name,kind,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at").order("priority"),
           db().from("tasks").select("id,title,status,priority,due,project_id").neq("status", "done").limit(200),
           db().from("ideas").select("id,text").eq("status", "inbox").limit(50),
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
@@ -173,8 +173,11 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         });
         const blocked = a.status === "rejected" ? ` (blocked: ${(a.result as { blocked?: string })?.blocked})` : "";
         return {
-          label: a.status === "rejected" ? `Blocked by spend cap: ${input.title}` : `Sent for your approval: ${input.title}`,
-          result: a.status === "rejected"
+          label: a.status === "rejected" ? `Blocked by spend cap: ${input.title}`
+            : a.status === "pending" ? `Sent for your approval: ${input.title}` : `Done on trust: ${input.title}`,
+          result: a.status !== "rejected" && a.status !== "pending"
+            ? `Ran without asking because Thomas has approved this kind of action enough times (trust ladder). Status: ${a.status}. ${JSON.stringify(a.result ?? {})}`
+            : a.status === "rejected"
             ? `Blocked automatically${blocked}. Tell Thomas and suggest a cheaper option or raising the cap.`
             : "Queued in Thomas's Approvals screen. It will not happen until he approves. Do not wait for it; carry on with the rest.",
         };

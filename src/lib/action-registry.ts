@@ -12,6 +12,8 @@ export interface ActionKind {
   kind: string;
   label: string;
   risk: "auto" | "approval";
+  /** Can graduate to running on its own after enough straight approvals. Never true for money, signups, messages as Thomas or PC use. */
+  trustable?: boolean;
   execute?: (a: Action) => Promise<Record<string, unknown>>;
 }
 
@@ -52,7 +54,7 @@ async function vercelRedeploy(a: Action) {
 
 export const ACTION_KINDS: Record<string, ActionKind> = {
   "github.create_issue": { kind: "github.create_issue", label: "Create GitHub issue", risk: "auto", execute: ghCreateIssue },
-  "vercel.redeploy": { kind: "vercel.redeploy", label: "Redeploy on Vercel", risk: "approval", execute: vercelRedeploy },
+  "vercel.redeploy": { kind: "vercel.redeploy", label: "Redeploy on Vercel", risk: "approval", trustable: true, execute: vercelRedeploy },
   // Carried out by a person, the Claude agent, or the PC helper once approved.
   "signup": { kind: "signup", label: "Sign up for a service", risk: "approval" },
   "purchase": { kind: "purchase", label: "Pay for something", risk: "approval" },
@@ -60,6 +62,9 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
   "pc.session": { kind: "pc.session", label: "Use your PC", risk: "approval" },
   "other": { kind: "other", label: "Other", risk: "approval" },
 };
+
+/** Hard rule: these always ask, whatever the trust ladder or autonomy setting says. */
+export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session"];
 
 export function kindOf(kind: string): ActionKind {
   return ACTION_KINDS[kind] ?? ACTION_KINDS.other;

@@ -1,6 +1,7 @@
 export type ProjectStatus = "active" | "paused" | "idea" | "done" | "archived";
 
 export interface Project {
+  kind?: "app" | "client" | "personal";
   id: string;
   name: string;
   status: ProjectStatus;
@@ -72,6 +73,7 @@ export interface Settings {
   focus_minutes: number;
   last_review_at: string | null;
   autonomy?: "ask" | "balanced" | "decide";
+  trust_after?: number;
 }
 
 export interface Signals {

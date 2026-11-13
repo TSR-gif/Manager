@@ -73,7 +73,9 @@ export async function runClaudeCode(
   return new Promise<string>((resolve) => {
     let child;
     try {
-      child = spawn(bin, args, { shell: isWin, cwd: os.tmpdir(), env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+      // on Windows `claude` may be a .cmd shim, so go through the shell and quote paths with spaces
+      const argv = isWin ? args.map((a) => (/[\s&()^]/.test(a) ? `"${a}"` : a)) : args;
+      child = spawn(bin, argv, { shell: isWin, cwd: os.tmpdir(), env: process.env, stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) {
       send({ type: "error", message: `Couldn't start Claude Code: ${String(e)}` });
       void save("failed").then(() => resolve(id));

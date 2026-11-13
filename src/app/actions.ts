@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { COOKIE, sessionToken } from "@/lib/auth";
 import { db, unwrap } from "@/lib/db";
 import { kindOf } from "@/lib/action-registry";
+import { trustLevel } from "@/lib/trust";
 import { getSettings, monthSpendCents } from "@/lib/queries";
 import type { Action } from "@/lib/types";
 
@@ -170,6 +171,9 @@ export async function queueAction(input: {
   if (cost > s.per_purchase_cap_cents) blockedWhy = "over per-purchase cap";
   else if (cost > 0 && (await monthSpendCents()) + cost > s.monthly_cap_cents) blockedWhy = "over monthly cap";
   if (blockedWhy) risk = "blocked";
+  // Trust ladder: a trustable, free action type Thomas has approved N times in a row runs on its own.
+  let trusted = false;
+  if (!blockedWhy && risk === "approval" && cost === 0 && (await trustLevel(k.kind)).trusted) { risk = "auto"; trusted = true; }
 
   const [a] = unwrap(await db().from("actions").insert({
     kind: k.kind, title: input.title, reason: input.reason ?? null, payload: input.payload ?? {},
@@ -178,6 +182,7 @@ export async function queueAction(input: {
     status: blockedWhy ? "rejected" : "pending",
     result: blockedWhy ? { blocked: blockedWhy } : null,
     decided_at: blockedWhy ? new Date().toISOString() : null,
+    ...(trusted ? { reason: `${input.reason ? input.reason + " · " : ""}auto-approved by trust ladder` } : {}),
   }).select());
   if (risk === "auto") return await execute(a);
   refresh();
@@ -243,7 +248,13 @@ export async function saveSettings(form: FormData) {
     per_purchase_cap_cents: Math.round(n("per_purchase_cap", 50) * 100),
     monthly_cap_cents: Math.round(n("monthly_cap", 200) * 100),
     focus_minutes: n("focus_minutes", 50),
+    trust_after: Math.max(0, n("trust_after", 3)),
   }).eq("id", 1);
+  refresh();
+}
+
+export async function unpairPhone() {
+  await db().from("settings").update({ telegram_chat_id: null }).eq("id", 1);
   refresh();
 }
 

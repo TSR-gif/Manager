@@ -70,7 +70,7 @@ export default async function Projects() {
                           <span className="truncate font-semibold">{p.name}</span>
                           <StatusDot status={p.status} />
                         </div>
-                        <div className="text-[12px] text-muted">touched {ago(p.last_touched_at)}</div>
+                        <div className="flex items-center gap-1.5 text-[12px] text-muted">{p.kind === "client" && <span className="chip chip-accent2 !py-0">Client job</span>}touched {ago(p.last_touched_at)}</div>
                       </div>
                       <PriorityBadge p={p.priority} />
                     </div>

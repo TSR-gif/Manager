@@ -49,6 +49,7 @@ export default async function ProjectPage({
           {!isNew && (
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <PriorityBadge p={p.priority} />
+              {p.kind === "client" && <span className="chip chip-accent2">Client job</span>}
               <span className="chip capitalize">{p.status}</span>
               <SignalChips s={s} />
             </div>

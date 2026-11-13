@@ -30,9 +30,9 @@ insert into projects (name, status, priority, github_repo, vercel_project, goal,
   'Write a one-paragraph brief and the first 3 tasks',
   'No GitHub repo yet. A folder exists on his PC: C:\Users\tomsc\NDISScanner.'),
  ('Altona Sports Centre', 'active', 3, null, null,
-  'Define the goal for Altona Sports Centre',
-  'Write down what done looks like and the first 3 tasks',
-  'No repo yet. Details unknown: ask Thomas.'),
+  'Deliver the Altona Sports Centre job on time and get paid',
+  'Write down the scope, deadline and agreed price',
+  'Client job (paid work for Altona Sports Centre). Track scope, deliverables, hours, invoice and payment here.'),
  ('Web Scrapers', 'active', 4, null, null,
   'Reusable scrapers that feed my other apps (deals, prices, odds)',
   'List which scrapers exist and which app each one feeds',
@@ -47,3 +47,5 @@ insert into projects (name, status, priority, github_repo, vercel_project, goal,
   null),
  ('TradingProgram', 'archived', 5, 'TSR-gif/TradingProgram', null,
   null, null, 'Empty repo (initial commit 12 Nov). Probably superseded by Day trader.');
+
+update projects set kind = 'client' where name = 'Altona Sports Centre';

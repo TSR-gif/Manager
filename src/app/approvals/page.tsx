@@ -1,8 +1,10 @@
 import { Fragment } from "react";
-import { Bot, CheckCircle2, CircleDashed, CircleSlash, Clock, ExternalLink, Gauge, ScrollText, ShieldCheck, User, XCircle } from "lucide-react";
-import { decideAction, markActionDone, saveSettings } from "@/app/actions";
+import { Bot, Send, Smartphone, CheckCircle2, CircleDashed, CircleSlash, Clock, ExternalLink, Gauge, ScrollText, ShieldCheck, User, XCircle } from "lucide-react";
+import { decideAction, markActionDone, saveSettings, unpairPhone } from "@/app/actions";
+import { sessionToken } from "@/lib/auth";
 import { getActions, getProjects, getSettings, monthSpendCents } from "@/lib/queries";
-import { kindOf } from "@/lib/action-registry";
+import { ACTION_KINDS, ALWAYS_ASK, kindOf } from "@/lib/action-registry";
+import { trustLevel } from "@/lib/trust";
 import { Empty, ProjectAvatar, ago, money } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +22,10 @@ export default async function Approvals() {
   const pname = (id: string | null) => projects.find((p) => p.id === id)?.name;
   const pending = actions.filter((a) => a.status === "pending");
   const handoff = actions.filter((a) => a.status === "approved");
+  const ladder = await Promise.all(Object.values(ACTION_KINDS).filter((k) => k.trustable).map(async (k) => ({ k, t: await trustLevel(k.kind) })));
+  const pairCode = (await sessionToken()).slice(0, 8).toUpperCase();
+  const botOn = !!process.env.TELEGRAM_BOT_TOKEN;
+  const paired = !!(settings as { telegram_chat_id?: string | null }).telegram_chat_id;
   const pct = Math.min(100, (spent / Math.max(1, settings.monthly_cap_cents)) * 100);
 
   return (
@@ -81,6 +87,27 @@ export default async function Approvals() {
       )}
 
       <section className="card">
+        <div className="mb-2 flex items-center gap-2"><Smartphone size={16} className="text-accent" /><span className="font-semibold">Approve from your phone</span>
+          <span className={`chip ml-auto ${paired ? "chip-good" : botOn ? "chip-warn" : ""}`}>{paired ? "Telegram paired" : botOn ? "Waiting to pair" : "Off"}</span>
+        </div>
+        {paired ? (
+          <div className="flex flex-wrap items-center gap-3 text-[13.5px] text-muted">
+            <span>Approvals arrive in Telegram with Approve / Deny buttons. Text the bot to ask the assistant, or start with <b className="text-text">+</b> to quick-add.</span>
+            <form action={unpairPhone}><button className="btn !h-8 text-[12.5px]">Unpair</button></form>
+          </div>
+        ) : botOn ? (
+          <p className="text-[13.5px] text-muted">Open your bot in Telegram and send <code className="rounded bg-panel3 px-1.5 py-0.5 text-text">/start {pairCode}</code></p>
+        ) : (
+          <ol className="list-decimal space-y-1 pl-5 text-[13.5px] text-muted">
+            <li>In Telegram, message <b className="text-text">@BotFather</b>, send <code>/newbot</code> and pick a name.</li>
+            <li>Paste the token it gives you into <code>.env.local</code> as <code>TELEGRAM_BOT_TOKEN=</code>, then restart Manager.</li>
+            <li>Come back here for your pair code.</li>
+          </ol>
+        )}
+        <div className="mt-2 flex items-center gap-1.5 text-[12px] text-faint"><Send size={12} /> Only your paired chat can approve. Money and signups still need your tap.</div>
+      </section>
+
+      <section className="card">
         <div className="mb-4 flex items-center gap-2"><Gauge size={16} className="text-accent2" /><span className="font-semibold">Guardrails</span></div>
         <div className="mb-5">
           <div className="mb-1.5 flex justify-between text-[13px]"><span className="text-muted">Spent this month</span><span><b>{money(spent)}</b> <span className="text-muted">of {money(settings.monthly_cap_cents)}</span></span></div>
@@ -88,14 +115,32 @@ export default async function Approvals() {
             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct > 85 ? "var(--bad)" : pct > 60 ? "var(--warn)" : "var(--good)" }} />
           </div>
         </div>
-        <form action={saveSettings} className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <form action={saveSettings} className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <label className="space-y-1.5"><span className="label">Max per purchase $</span><input name="per_purchase_cap" type="number" step="1" min="0" defaultValue={settings.per_purchase_cap_cents / 100} /></label>
           <label className="space-y-1.5"><span className="label">Monthly cap $</span><input name="monthly_cap" type="number" step="1" min="0" defaultValue={settings.monthly_cap_cents / 100} /></label>
           <label className="space-y-1.5"><span className="label">Active projects</span><input name="max_active_projects" type="number" min="1" defaultValue={settings.max_active_projects} /></label>
           <label className="space-y-1.5"><span className="label">Focus block min</span><input name="focus_minutes" type="number" min="5" defaultValue={settings.focus_minutes} /></label>
-          <button className="btn col-span-2 md:col-span-4">Save guardrails</button>
+          <label className="space-y-1.5"><span className="label">Trust after N OKs</span><input name="trust_after" type="number" min="0" defaultValue={settings.trust_after ?? 3} /></label>
+          <button className="btn col-span-2 md:col-span-5">Save guardrails</button>
         </form>
         <p className="mt-3 text-[12px] text-faint">Anything over a cap is blocked automatically. Card numbers and passwords are never stored in Manager.</p>
+        <div className="mt-4 border-t border-line pt-4">
+          <div className="mb-2 text-[13px] font-semibold">Trust ladder</div>
+          <p className="mb-3 text-[12.5px] text-muted">Free, low-risk actions you approve {settings.trust_after ?? 3} times in a row start running on their own. One rejection resets it. Signups, payments, emails sent as you and PC use always ask ({ALWAYS_ASK.length} hard rules).</p>
+          <ul className="space-y-2">
+            {ladder.map(({ k, t }) => (
+              <li key={k.kind} className="flex items-center gap-3 text-[13px]">
+                <span className="w-40 truncate">{k.label}</span>
+                <div className="flex flex-1 gap-1">
+                  {Array.from({ length: Math.max(1, t.needed) }).map((_, i) => (
+                    <span key={i} className={`h-1.5 flex-1 rounded-full ${i < t.streak ? "bg-good" : "bg-line"}`} />
+                  ))}
+                </div>
+                <span className={`chip ${t.trusted ? "chip-good" : ""}`}>{t.needed === 0 ? "off" : t.trusted ? "runs on its own" : `${Math.min(t.streak, t.needed)}/${t.needed}`}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </section>
 
       <section className="card">

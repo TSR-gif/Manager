@@ -25,17 +25,27 @@ if (!fs.existsSync(envFile)) {
     "GITHUB_TOKEN=",
     "VERCEL_TOKEN=",
     "VERCEL_TEAM_ID=team_IiSZJwc7Mj1Edzz5rQ3gFRBA",
+    "# Optional: phone approvals. Make a bot with @BotFather in Telegram and paste its token here.",
+    "TELEGRAM_BOT_TOKEN=",
     "",
   ].join("\n"));
   console.log("Created .env.local (login password: manager)");
 }
 
-const run = (cmd, args, name) => {
-  const p = spawn(cmd, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], shell: isWin, env: process.env });
+// Read .env.local so the helper processes (Telegram bot) get the same settings as the app.
+const env = { ...process.env };
+for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
+  const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+  if (m && env[m[1]] === undefined) env[m[1]] = m[2];
+}
+const managerKey = crypto.createHash("sha256").update(`${env.AUTH_SECRET ?? "manager"}:${env.APP_PASSWORD ?? ""}`).digest("hex");
+
+const run = (cmd, args, name, opts = {}) => {
+  const p = spawn(cmd, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], shell: false, env: { ...env, ...opts.env } });
   const tag = (d) => d.toString().split(/\r?\n/).filter(Boolean).forEach((l) => console.log(`[${name}] ${l}`));
   p.stdout.on("data", tag);
   p.stderr.on("data", tag);
-  p.on("exit", (code) => { console.log(`[${name}] stopped (${code})`); process.exit(code ?? 0); });
+  p.on("exit", (code) => { console.log(`[${name}] stopped (${code})`); if (!opts.optional) process.exit(code ?? 0); });
   return p;
 };
 
@@ -57,6 +67,13 @@ setTimeout(() => {
   } catch {}
 }, 6000);
 
-const stop = () => { db.kill(); app.kill(); process.exit(0); };
+let bot = null;
+if (env.TELEGRAM_BOT_TOKEN) {
+  setTimeout(() => {
+    bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { MANAGER_URL: "http://localhost:3000", MANAGER_KEY: managerKey } });
+  }, 8000);
+}
+
+const stop = () => { db.kill(); app.kill(); bot?.kill(); process.exit(0); };
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
