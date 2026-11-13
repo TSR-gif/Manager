@@ -60,11 +60,18 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
   "purchase": { kind: "purchase", label: "Pay for something", risk: "approval" },
   "email.send": { kind: "email.send", label: "Send an email", risk: "approval" },
   "pc.session": { kind: "pc.session", label: "Use your PC", risk: "approval" },
+  // Drafts from recurring jobs. Approving marks it ready: Thomas (or his scheduler) posts it, and he sends replies himself.
+  "social.post": { kind: "social.post", label: "Social media post", risk: "approval" },
+  "social.reply": { kind: "social.reply", label: "Reply to a comment", risk: "approval" },
+  // Ads are money: launching or raising a budget always asks and counts against the spend limits.
+  "ads.launch": { kind: "ads.launch", label: "Launch an ad", risk: "approval" },
+  "ads.budget": { kind: "ads.budget", label: "Change an ad budget", risk: "approval" },
+  "ads.pause": { kind: "ads.pause", label: "Pause an ad", risk: "approval" },
   "other": { kind: "other", label: "Other", risk: "approval" },
 };
 
 /** Hard rule: these always ask, whatever the trust ladder or autonomy setting says. */
-export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session"];
+export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget"];
 
 export function kindOf(kind: string): ActionKind {
   return ACTION_KINDS[kind] ?? ACTION_KINDS.other;

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, FolderKanban, Lightbulb, RefreshCcw, Settings, UserRound, Wallet } from "lucide-react";
+import { ChevronRight, FolderKanban, Lightbulb, Megaphone, RefreshCcw, Settings, UserRound, Wallet } from "lucide-react";
 import { getIdeas } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,7 @@ export default async function More() {
   const rows = [
     { href: "/projects", icon: FolderKanban, title: "Projects", sub: "Every project, how it's going and what's next" },
     { href: "/money", icon: Wallet, title: "Money", sub: "What you're owed, hours, subscriptions" },
+    { href: "/marketing", icon: Megaphone, title: "Marketing", sub: "Posts, replies and ads for your apps" },
     { href: "/inbox", icon: Lightbulb, title: "Ideas", sub: "Ideas you've jotted down, ready to sort", badge: ideas.length },
     { href: "/review", icon: RefreshCcw, title: "Weekly review", sub: "10 minutes to reset your priorities" },
     { href: "/me", icon: UserRound, title: "About you", sub: "What your assistant knows about you" },

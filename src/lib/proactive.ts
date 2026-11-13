@@ -61,6 +61,8 @@ async function run(kind: "brief" | "checkin", goal: string) {
 }
 
 export async function tick(force?: "brief" | "checkin") {
+  // recurring per-project jobs run on their own schedule, alongside the catch-up and check-ins
+  if (!force) void import("@/lib/jobs").then((m) => m.runDueJobs()).catch(() => {});
   if (running) return { skipped: "busy" };
   const { data: s } = await db().from("settings").select("*").eq("id", 1).single();
   if (!s) return { skipped: "no settings" };

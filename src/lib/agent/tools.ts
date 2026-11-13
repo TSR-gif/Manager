@@ -115,6 +115,54 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "draft_social_post",
+    description: "Draft a social media post (or a reply to a comment) for Thomas to approve. It is NOT posted: it lands in Approvals with a preview. Use whenever Thomas asks for posts, captions, slideshows or comment replies, and for scheduled content jobs like Bargie's weekly posts. Use only real numbers and facts. For a picture slideshow, give 3 to 10 slides, each with a short heading, the body text (the real price or fact) and which photo to use.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_name: str,
+        channel: { type: "string", enum: ["tiktok", "instagram", "facebook", "tiktok+instagram", "reply"] },
+        title: { ...str, description: "Short name for this draft, e.g. 'Same 15 items: Coles vs Woolies vs Aldi'" },
+        caption: str,
+        hashtags: { type: "array", items: str },
+        slides: { type: "array", items: { type: "object", properties: { heading: str, body: str, photo: nstr }, required: ["heading", "body", "photo"], additionalProperties: false } },
+        reply_to: { ...nstr, description: "For channel reply: the comment being answered" },
+        post_at: { ...nstr, description: "Suggested time, e.g. 'Wed 6 pm', or null" },
+        sources: { ...nstr, description: "Where the numbers came from" },
+      },
+      required: ["project_name", "channel", "title", "caption", "hashtags", "slides", "reply_to", "post_at", "sources"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "draft_ad_campaign",
+    description: "Draft an ad campaign for one of Thomas's apps (e.g. Bargie on Facebook + Instagram or TikTok). Saves it on the project's Marketing screen and asks Thomas to approve the launch: the total budget (daily x days) is money, so it goes through Approvals and his spend limits. Nothing is launched by you: once approved, Thomas launches it in the ads dashboard. Write the creative (what the ad shows and says) from real facts only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_name: str, name: str,
+        platform: { type: "string", enum: ["meta", "tiktok", "google", "apple"] },
+        goal: str, audience: str, creative: str,
+        daily_budget_dollars: { type: "number" }, days: { type: "integer" },
+      },
+      required: ["project_name", "name", "platform", "goal", "audience", "creative", "daily_budget_dollars", "days"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "log_ad_results",
+    description: "Record an ad campaign's spend and results (from what Thomas tells you or a report you can read). Use the campaign name.",
+    input_schema: {
+      type: "object",
+      properties: { campaign_name: str, spend_dollars: { type: "number" }, installs: { type: "integer" }, clicks: { type: "integer" }, impressions: { type: "integer" } },
+      required: ["campaign_name", "spend_dollars", "installs", "clicks", "impressions"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: "request_approval",
     description:
       "Queue an action that needs Thomas's approval before it happens: signing up for a service, paying for anything, sending an email, redeploying, deleting things, or using his PC. It does NOT run now: it lands in his Approvals screen. Always include the cost in dollars (0 if free) and a clear reason. Never ask for or include card numbers or passwords. To control his PC (desktop apps or websites, e.g. to fill a signup form), request kind pc.session with the exact purpose; once he approves, your next turn gets desktop and browser tools for 2 hours. For purchases, prepare everything up to the payment step; Thomas pays himself.",
@@ -250,6 +298,41 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           payload: { repo: p.github_repo, title: input.title, body: input.body },
         });
         return { label: `GitHub issue on ${p.name}: ${a.status}`, result: JSON.stringify({ status: a.status, result: a.result }) };
+      }
+      case "draft_social_post": {
+        const p = await findProject(input.project_name as string);
+        const reply = input.channel === "reply";
+        const a = await queueAction({
+          kind: reply ? "social.reply" : "social.post", title: String(input.title), requested_by: "agent", project_id: p?.id ?? null,
+          reason: reply ? `Reply to: ${String(input.reply_to ?? "").slice(0, 200)}` : `${String(input.channel)}${input.post_at ? ` · suggested ${input.post_at}` : ""}`,
+          payload: { channel: input.channel, caption: input.caption, hashtags: input.hashtags, slides: input.slides, reply_to: input.reply_to, post_at: input.post_at, sources: input.sources },
+        });
+        return { label: `Drafted for your OK: ${input.title}`, result: `Draft is waiting in Approvals (${a.status}). Nothing was posted.` };
+      }
+      case "draft_ad_campaign": {
+        const p = await findProject(input.project_name as string);
+        const daily = Math.round(Number(input.daily_budget_dollars) * 100);
+        const days = Math.max(1, Math.min(90, Number(input.days) || 7));
+        const [c] = unwrap(await db().from("campaigns").insert({
+          project_id: p?.id ?? null, name: input.name, platform: input.platform, goal: input.goal, audience: input.audience,
+          creative: input.creative, daily_budget_cents: daily, days, status: "waiting",
+        }).select());
+        const a = await queueAction({
+          kind: "ads.launch", title: `Launch ad: ${input.name}`, requested_by: "agent", project_id: p?.id ?? null, cost_cents: daily * days,
+          reason: `$${(daily / 100).toFixed(0)}/day for ${days} days · goal: ${input.goal}`,
+          payload: { campaign_id: c.id, platform: input.platform, audience: input.audience, creative: input.creative, daily_budget_cents: daily, days },
+        });
+        if (a.status === "rejected") await db().from("campaigns").update({ status: "draft", notes: `Blocked: ${(a.result as { blocked?: string })?.blocked ?? "over a spend limit"}` }).eq("id", c.id);
+        await did(`Drafted ad campaign “${input.name}”`, { op: "delete", table: "campaigns", id: c.id });
+        return { label: a.status === "rejected" ? `Ad drafted, but over your spend limit` : `Ad drafted, launch waiting for your OK`, result: a.status === "rejected" ? `Saved as a draft. The launch was blocked: ${JSON.stringify(a.result)}. Tell Thomas he can lower the budget or raise his limit in Settings.` : "Saved. The launch is waiting in Approvals. Nothing is live." };
+      }
+      case "log_ad_results": {
+        const { data: list } = await db().from("campaigns").select("id,name");
+        const key = String(input.campaign_name).toLowerCase();
+        const c = ((list ?? []) as { id: string; name: string }[]).find((x) => x.name.toLowerCase() === key) ?? ((list ?? []) as { id: string; name: string }[]).find((x) => x.name.toLowerCase().includes(key));
+        if (!c) return { label: "Couldn't find that ad", result: `No campaign matches "${input.campaign_name}".`, isError: true };
+        await db().from("campaigns").update({ spend_cents: Math.round(Number(input.spend_dollars) * 100), installs: input.installs, clicks: input.clicks, impressions: input.impressions }).eq("id", c.id);
+        return { label: `Updated results for ${c.name}`, result: "Saved." };
       }
       case "request_approval": {
         const p = await findProject(input.project_name as string | null);

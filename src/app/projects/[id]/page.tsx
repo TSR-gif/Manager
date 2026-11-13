@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History, Megaphone } from "lucide-react";
 import { addTask, requestAction, saveProject, toggleWatch } from "@/app/actions";
 import { Orb } from "@/components/orb";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
@@ -85,6 +85,7 @@ export default async function ProjectPage({
                   {(p as { watch?: boolean }).watch ? <><Orb size={10} /> Keeping an eye on it</> : "+ Keep an eye on this"}
                 </button>
               </form>
+              {p.kind !== "client" && <Link href={`/marketing?project=${p.id}`} className="chip transition hover:border-accent"><Megaphone size={11} /> Posts and ads</Link>}
             </div>
           )}
         </div>

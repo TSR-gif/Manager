@@ -5,6 +5,9 @@ import { decideAction, markActionDone } from "@/app/actions";
 import { getActions, getProjects, getSettings, monthSpendCents } from "@/lib/queries";
 import { kindOf } from "@/lib/action-registry";
 import { Empty, ProjectAvatar, ago, money } from "@/components/ui";
+import { SocialPreview, type SocialPayload } from "@/components/social-preview";
+
+const readyLabel = (kind: string) => (kind === "social.post" ? "Ready to post" : kind === "social.reply" ? "Ready to send" : kind === "ads.launch" ? "Ready to launch" : null);
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +52,18 @@ export default async function Approvals() {
                 <div className="mt-1 flex items-center gap-2 text-[13px] text-muted"><ProjectAvatar name={pname(a.project_id)!} size={18} />{pname(a.project_id)}</div>
               )}
               {a.reason && <div className="mt-2 text-[13.5px] text-muted">{a.reason}</div>}
-              {Object.keys(a.payload).length > 0 && (
+              {a.kind.startsWith("social.") ? (
+                <div className="mt-3 rounded-xl border border-line bg-bg2/60 p-3"><SocialPreview p={a.payload as SocialPayload} /></div>
+              ) : a.kind.startsWith("ads.") ? (
+                <div className="mt-3 space-y-1.5 rounded-xl border border-line bg-bg2/60 p-3 text-[13px]">
+                  {(() => { const q = a.payload as { audience?: string; creative?: string; platform?: string }; return (<>
+                    {q.platform && <div><span className="text-faint">Where: </span>{q.platform === "meta" ? "Facebook + Instagram" : q.platform}</div>}
+                    {q.audience && <div><span className="text-faint">Who sees it: </span>{q.audience}</div>}
+                    {q.creative && <div className="whitespace-pre-wrap"><span className="text-faint">The ad: </span>{q.creative}</div>}
+                    <div className="text-[12px] text-faint">Approving doesn&apos;t launch it. You launch it in the ads dashboard, then tick it off here.</div>
+                  </>); })()}
+                </div>
+              ) : Object.keys(a.payload).length > 0 && (
                 <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-xl border border-line bg-bg2/60 p-3 text-[12.5px]">
                   {Object.entries(a.payload).map(([k, v]) => (
                     <Fragment key={k}><dt className="text-faint">{k}</dt><dd className="truncate">{String(v)}</dd></Fragment>
@@ -71,10 +85,14 @@ export default async function Approvals() {
           <ul className="space-y-2">
             {handoff.map((a) => (
               <li key={a.id} className="card flex flex-col gap-3 md:flex-row md:items-center">
-                <div className="flex-1"><div className="font-medium">{a.title}</div><div className="text-[12px] text-muted">{kindOf(a.kind).label} · approved {ago(a.decided_at)}</div></div>
+                <div className="flex-1">
+                  <div className="font-medium">{a.title}</div>
+                  <div className="text-[12px] text-muted">{readyLabel(a.kind) ?? kindOf(a.kind).label} · approved {ago(a.decided_at)}</div>
+                  {a.kind.startsWith("social.") && <details className="mt-2"><summary className="cursor-pointer text-[13px] text-accent">Show the post</summary><div className="mt-2"><SocialPreview p={a.payload as SocialPayload} /></div></details>}
+                </div>
                 <form action={markActionDone.bind(null, a.id)} className="flex gap-2 md:w-[380px]">
                   <input name="note" placeholder="Any note? (optional)" />
-                  <button className="btn btn-good">Mark done</button>
+                  <button className="btn btn-good shrink-0">{a.kind === "social.post" ? "I posted it" : a.kind === "social.reply" ? "I sent it" : a.kind === "ads.launch" ? "I launched it" : "Mark done"}</button>
                 </form>
               </li>
             ))}

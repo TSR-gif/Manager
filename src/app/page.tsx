@@ -7,6 +7,7 @@ import { getActions, getActiveFocus, getIdeas, getProjects, getSettings, getTask
 import { getSignals } from "@/lib/signals";
 import { Empty, ProjectAvatar, SignalChips, TZ, ago, money as fmtMoney, todayISO } from "@/components/ui";
 import { kindOf } from "@/lib/action-registry";
+import { SocialPreview, type SocialPayload } from "@/components/social-preview";
 import { FocusTimer } from "@/components/focus-timer";
 import { TaskItem } from "@/components/task-item";
 import { OpenCommandButton } from "@/components/open-command";
@@ -90,6 +91,7 @@ export default async function Today() {
               <div className="flex items-center gap-2 text-[12px] text-warn"><ShieldCheck size={14} /> Needs your OK · {kindOf(a.kind).label}{a.cost_cents > 0 && <b className="ml-auto text-text">{fmtMoney(a.cost_cents)}</b>}</div>
               <div className="mt-1.5 text-[15px] font-medium">{a.title}</div>
               {a.reason && <div className="mt-0.5 line-clamp-2 text-[13px] text-muted">{a.reason}</div>}
+              {a.kind.startsWith("social.") && <div className="mt-2.5"><SocialPreview p={a.payload as SocialPayload} compact /></div>}
               <div className="mt-3 flex gap-2">
                 <form action={decideAction.bind(null, a.id, true)} className="flex-1"><button className="btn btn-good w-full !min-h-11">Approve</button></form>
                 <form action={decideAction.bind(null, a.id, false)} className="flex-1"><button className="btn w-full !min-h-11">Not now</button></form>

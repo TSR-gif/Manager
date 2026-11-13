@@ -189,9 +189,25 @@ export async function queueAction(input: {
   return a;
 }
 
+/** Keep an ad campaign's status in step with its approval: waiting → ready (approved) → live (you launched it). */
+async function syncCampaign(a: Pick<Action, "kind" | "payload">, step: "approved" | "rejected" | "done") {
+  const id = (a.payload as { campaign_id?: string })?.campaign_id;
+  if (!id || !a.kind.startsWith("ads.")) return;
+  const p = a.payload as { daily_budget_cents?: number; days?: number };
+  if (a.kind === "ads.launch") {
+    const status = step === "approved" ? "ready" : step === "rejected" ? "draft" : "live";
+    await db().from("campaigns").update({ status, ...(step === "done" ? { started_on: new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne" }).format(new Date()) } : {}) }).eq("id", id);
+  } else if (a.kind === "ads.budget" && step === "approved") {
+    await db().from("campaigns").update({ ...(p.daily_budget_cents != null ? { daily_budget_cents: p.daily_budget_cents } : {}), ...(p.days != null ? { days: p.days } : {}) }).eq("id", id);
+  } else if (a.kind === "ads.pause" && step === "approved") {
+    await db().from("campaigns").update({ status: "paused" }).eq("id", id);
+  }
+}
+
 async function execute(a: Action): Promise<Action> {
   const k = kindOf(a.kind);
   const now = new Date().toISOString();
+  await syncCampaign(a, "approved");
   if (!k.execute) {
     // Nothing automatic to run: approved and handed to the agent / PC helper / you.
     const [r] = unwrap(await db().from("actions").update({ status: "approved", decided_at: a.decided_at ?? now }).eq("id", a.id).select());
@@ -216,6 +232,7 @@ export async function decideAction(id: string, approve: boolean) {
   const now = new Date().toISOString();
   if (!approve) {
     await db().from("actions").update({ status: "rejected", decided_at: now }).eq("id", id);
+    await syncCampaign(a, "rejected");
     refresh();
     return;
   }
@@ -223,6 +240,8 @@ export async function decideAction(id: string, approve: boolean) {
 }
 
 export async function markActionDone(id: string, form: FormData) {
+  const { data: a } = await db().from("actions").select("kind,payload,status").eq("id", id).maybeSingle();
+  if (a?.status === "approved") await syncCampaign(a, "done");
   await db().from("actions").update({
     status: "executed", executed_at: new Date().toISOString(), result: { note: str(form, "note") },
   }).eq("id", id).eq("status", "approved");
@@ -462,7 +481,7 @@ export async function disconnectGithub() {
 }
 
 // ---------- undo what the assistant did ----------
-const UNDO_TABLES = new Set(["tasks", "projects", "memories", "time_entries", "subscriptions", "ideas"]);
+const UNDO_TABLES = new Set(["tasks", "projects", "memories", "time_entries", "subscriptions", "ideas", "campaigns"]);
 export async function undoActivity(form: FormData) {
   const id = str(form, "id");
   if (!id) return;
@@ -495,5 +514,99 @@ export async function pauseProjects(form: FormData) {
     const { data } = await db().from("projects").select("name").eq("id", id).maybeSingle();
     await db().from("activity").insert({ title: `Paused ${data?.name ?? "a project"} (you said yes)`, undo: { op: "update", table: "projects", id, values: { status: "active" } } });
   }
+  refresh();
+}
+
+// ---------- recurring jobs ----------
+export async function saveJob(form: FormData) {
+  const { DAYS } = await import("@/lib/jobs");
+  const id = str(form, "id");
+  const days = form.getAll("days").map(String).filter((d) => (DAYS as readonly string[]).includes(d));
+  const at = str(form, "at_time") ?? "09:00";
+  const row = {
+    project_id: str(form, "project_id"),
+    name: (str(form, "name") ?? "Weekly job").slice(0, 80),
+    instructions: (str(form, "instructions") ?? "").slice(0, 4000),
+    days: (days.length ? days : ["mon"]).join(","),
+    at_time: /^\d{2}:\d{2}$/.test(at) ? at : "09:00",
+    source_url: str(form, "source_url"),
+  };
+  if (!row.instructions) return;
+  if (id) await db().from("jobs").update(row).eq("id", id);
+  else await db().from("jobs").insert({ ...row, enabled: true });
+  refresh();
+}
+
+export async function toggleJob(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const { data } = await db().from("jobs").select("enabled").eq("id", id).single();
+  await db().from("jobs").update({ enabled: !data?.enabled }).eq("id", id);
+  refresh();
+}
+
+export async function deleteJob(form: FormData) {
+  const id = str(form, "id");
+  if (id) await db().from("jobs").delete().eq("id", id);
+  refresh();
+}
+
+/** Run a job now and watch it work in the assistant screen. */
+export async function runJobNow(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const { goalFor } = await import("@/lib/jobs");
+  const { data: j } = await db().from("jobs").select("*").eq("id", id).single();
+  if (!j) return;
+  const { data: p } = j.project_id ? await db().from("projects").select("name").eq("id", j.project_id).maybeSingle() : { data: null };
+  await db().from("jobs").update({ last_run_at: new Date().toISOString() }).eq("id", id);
+  redirect(`/agent?ask=${encodeURIComponent(goalFor(j, p?.name ?? null))}`);
+}
+
+// ---------- ads ----------
+const centsOf = (v: string | null) => Math.round(Number((v ?? "0").replace(/[$,\s]/g, "")) * 100) || 0;
+
+/** Save a campaign draft. Launching it is a separate, approved step. */
+export async function saveCampaign(form: FormData) {
+  const row = {
+    project_id: str(form, "project_id"), name: (str(form, "name") ?? "New campaign").slice(0, 80),
+    platform: str(form, "platform") ?? "meta", goal: str(form, "goal"), audience: str(form, "audience"), creative: str(form, "creative"),
+    daily_budget_cents: centsOf(str(form, "daily")), days: Math.max(1, Math.min(90, Number(str(form, "days") ?? 7))),
+  };
+  const id = str(form, "id");
+  if (id) await db().from("campaigns").update(row).eq("id", id);
+  else await db().from("campaigns").insert(row);
+  refresh();
+}
+
+/** Ask to launch: total budget goes through Approvals and the spend limits. */
+export async function requestLaunch(form: FormData) {
+  const id = str(form, "id");
+  const { data: c } = await db().from("campaigns").select("*").eq("id", id).single();
+  if (!c) return;
+  const total = c.daily_budget_cents * c.days;
+  const a = await queueAction({
+    kind: "ads.launch", title: `Launch ad: ${c.name} (${c.platform === "meta" ? "Facebook + Instagram" : c.platform})`, requested_by: "user", project_id: c.project_id,
+    cost_cents: total, reason: `$${(c.daily_budget_cents / 100).toFixed(0)}/day for ${c.days} days${c.goal ? ` · goal: ${c.goal}` : ""}`,
+    payload: { campaign_id: c.id, platform: c.platform, audience: c.audience, creative: c.creative, daily_budget_cents: c.daily_budget_cents, days: c.days },
+  });
+  await db().from("campaigns").update({ status: a.status === "rejected" ? "draft" : "waiting", notes: a.status === "rejected" ? `Blocked: ${(a.result as { blocked?: string })?.blocked ?? "over a spend limit"}. Raise the limit in Settings or lower the budget.` : null }).eq("id", c.id);
+  refresh();
+}
+
+export async function setCampaignStatus(form: FormData) {
+  const id = str(form, "id");
+  const status = str(form, "status");
+  if (!id || !status || !["live", "paused", "ended"].includes(status)) return;
+  await db().from("campaigns").update({ status, ...(status === "live" ? { started_on: new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne" }).format(new Date()) } : {}) }).eq("id", id);
+  refresh();
+}
+
+/** Record spend and results from the ads dashboard (or the assistant can do it). */
+export async function logCampaignResults(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const n = (k: string) => Math.max(0, Math.round(Number(str(form, k) ?? 0)) || 0);
+  await db().from("campaigns").update({ spend_cents: centsOf(str(form, "spend")), installs: n("installs"), clicks: n("clicks"), impressions: n("impressions") }).eq("id", id);
   refresh();
 }
