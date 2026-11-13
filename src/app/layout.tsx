@@ -1,27 +1,44 @@
 import type { Metadata, Viewport } from "next";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Nav } from "@/components/nav";
+import { CommandBar } from "@/components/command-bar";
+import { db } from "@/lib/db";
 
 export const metadata: Metadata = {
   title: "Manager",
   description: "Thomas's command centre",
-  manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "Manager", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0d12",
+  themeColor: "#07080c",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+async function pendingCount() {
+  try {
+    const { count } = await db().from("actions").select("id", { count: "exact", head: true }).eq("status", "pending");
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const pending = await pendingCount();
   return (
-    <html lang="en">
-      <body className="antialiased min-h-dvh">
-        <Nav />
-        <main className="mx-auto max-w-5xl px-4 pt-4 pb-28 md:pb-10 md:pl-56">{children}</main>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className="min-h-dvh antialiased">
+        <Nav pending={pending} />
+        <main className="mx-auto max-w-[1100px] px-4 pb-32 pt-5 md:pb-12 md:pl-[17rem] md:pr-8 md:pt-8"
+          style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}>
+          {children}
+        </main>
+        <CommandBar />
         <script
           dangerouslySetInnerHTML={{
             __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}`,

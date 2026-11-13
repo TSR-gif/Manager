@@ -1,11 +1,24 @@
 import Link from "next/link";
+import { CheckCircle2, Lightbulb, ListTodo, PauseCircle, Snail, Timer, Trash2, TrendingUp } from "lucide-react";
 import { completeReview, setProjectStatus } from "@/app/actions";
 import { db, unwrap } from "@/lib/db";
 import { getIdeas, getProjects, getSettings, getTasks } from "@/lib/queries";
-import { ago } from "@/components/ui";
+import { ProjectAvatar, ago } from "@/components/ui";
 import type { FocusSession, Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <section className="card">
+      <div className="mb-3 flex items-center gap-3">
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-panel3 text-[13px] font-semibold text-accent">{n}</span>
+        <span className="font-semibold">{title}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export default async function Review() {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
@@ -16,52 +29,74 @@ export default async function Review() {
   const active = projects.filter((p) => p.status === "active");
   const stalled = active.filter((p) => Date.now() - new Date(p.last_touched_at).getTime() > 7 * 86_400_000);
   const byProject = (id: string | null) => done.filter((t) => t.project_id === id).length;
+  const maxDone = Math.max(1, ...active.map((p) => byProject(p.id)), byProject(null));
 
   return (
-    <div className="space-y-5">
-      <h1 className="text-2xl font-bold">Weekly review</h1>
-      <div className="text-sm text-muted">Last review: {ago(settings.last_review_at)}</div>
+    <div className="fade-in space-y-6">
+      <header>
+        <h1 className="text-[28px] font-semibold tracking-tight">Weekly review</h1>
+        <p className="mt-1 text-[14px] text-muted">Last done {ago(settings.last_review_at)}. Ten minutes, once a week, keeps everything else honest.</p>
+      </header>
 
       <div className="grid grid-cols-3 gap-3">
-        <div className="card"><div className="label">Tasks done</div><div className="text-2xl font-bold">{done.length}</div></div>
-        <div className="card"><div className="label">Focus hours</div><div className="text-2xl font-bold">{(minutes / 60).toFixed(1)}</div></div>
-        <div className="card"><div className="label">Open tasks</div><div className="text-2xl font-bold">{openTasks.length}</div></div>
+        {[
+          { icon: <CheckCircle2 size={18} />, label: "Tasks done", v: done.length, tone: "var(--good)" },
+          { icon: <Timer size={18} />, label: "Focus hours", v: (minutes / 60).toFixed(1), tone: "var(--accent-2)" },
+          { icon: <ListTodo size={18} />, label: "Still open", v: openTasks.length, tone: "var(--accent)" },
+        ].map((x) => (
+          <div key={x.label} className="card !p-4">
+            <div style={{ color: x.tone }}>{x.icon}</div>
+            <div className="mt-2 text-[24px] font-semibold tabular-nums">{x.v}</div>
+            <div className="text-[12px] text-muted">{x.label}</div>
+          </div>
+        ))}
       </div>
 
-      <section className="card">
-        <div className="label mb-2">1. What moved</div>
-        <ul className="space-y-1 text-sm">
-          {active.map((p) => (
-            <li key={p.id} className="flex justify-between"><Link href={`/projects/${p.id}`} className="hover:underline">{p.name}</Link><span className="text-muted">{byProject(p.id)} done</span></li>
-          ))}
-          <li className="flex justify-between"><span>Everyday</span><span className="text-muted">{byProject(null)} done</span></li>
+      <Step n={1} title="What moved this week">
+        <ul className="space-y-2.5">
+          {[...active.map((p) => ({ id: p.id, name: p.name, n: byProject(p.id) })), { id: "everyday", name: "Everyday", n: byProject(null) }]
+            .sort((a, b) => b.n - a.n)
+            .map((r) => (
+              <li key={r.id} className="flex items-center gap-3 text-[14px]">
+                <ProjectAvatar name={r.name} size={24} />
+                <span className="w-40 truncate">{r.name}</span>
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#9a8bff] to-[#5ec8ff]" style={{ width: `${(r.n / maxDone) * 100}%` }} />
+                </div>
+                <span className="w-14 text-right text-muted tabular-nums">{r.n} done</span>
+              </li>
+            ))}
         </ul>
-      </section>
+      </Step>
 
-      <section className="card">
-        <div className="label mb-2">2. What stalled — keep, pause or drop?</div>
-        {stalled.length === 0 && <div className="text-sm text-muted">Nothing stalled. Nice.</div>}
-        <ul className="space-y-2">
-          {stalled.map((p) => (
-            <li key={p.id} className="flex flex-wrap items-center gap-2">
-              <span className="flex-1">{p.name} <span className="text-xs text-muted">untouched {ago(p.last_touched_at)}</span></span>
-              <form action={setProjectStatus.bind(null, p.id, "paused")}><button className="btn">Pause</button></form>
-              <form action={setProjectStatus.bind(null, p.id, "archived")}><button className="btn btn-bad">Drop</button></form>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <Step n={2} title="What stalled — keep, pause or drop?">
+        {stalled.length === 0 ? (
+          <div className="flex items-center gap-2 text-[14px] text-muted"><TrendingUp size={16} className="text-good" /> Nothing stalled. Every active project was touched this week.</div>
+        ) : (
+          <ul className="space-y-2">
+            {stalled.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-bg2/50 p-3">
+                <Snail size={16} className="text-warn" />
+                <span className="flex-1">{p.name} <span className="text-[12px] text-muted">untouched {ago(p.last_touched_at)}</span></span>
+                <form action={setProjectStatus.bind(null, p.id, "paused")}><button className="btn btn-sm"><PauseCircle size={13} /> Pause</button></form>
+                <form action={setProjectStatus.bind(null, p.id, "archived")}><button className="btn btn-bad btn-sm"><Trash2 size={13} /> Drop</button></form>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Step>
 
-      <section className="card">
-        <div className="label mb-2">3. Reset priorities</div>
-        <p className="text-sm text-muted">
-          You have {active.length} active projects (limit {settings.max_active_projects}).{" "}
+      <Step n={3} title="Reset priorities">
+        <p className="text-[14px] text-muted">
+          You have <b className="text-text">{active.length}</b> active projects (limit {settings.max_active_projects}).{" "}
           <Link href="/projects" className="text-accent">Adjust priorities and deadlines →</Link>
         </p>
-        {inbox.length > 0 && <p className="mt-1 text-sm"><Link href="/inbox" className="text-accent">Triage {inbox.length} ideas →</Link></p>}
-      </section>
+        {inbox.length > 0 && (
+          <Link href="/inbox" className="mt-3 flex items-center gap-2 text-[14px] text-accent"><Lightbulb size={15} /> Triage {inbox.length} waiting idea{inbox.length > 1 ? "s" : ""} →</Link>
+        )}
+      </Step>
 
-      <form action={completeReview}><button className="btn btn-primary w-full">Finish review</button></form>
+      <form action={completeReview}><button className="btn btn-primary w-full !py-3">Finish review</button></form>
     </div>
   );
 }

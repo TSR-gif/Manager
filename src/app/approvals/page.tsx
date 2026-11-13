@@ -1,12 +1,18 @@
+import { Fragment } from "react";
+import { Bot, CheckCircle2, CircleDashed, CircleSlash, Clock, ExternalLink, Gauge, ScrollText, ShieldCheck, User, XCircle } from "lucide-react";
 import { decideAction, markActionDone, saveSettings } from "@/app/actions";
 import { getActions, getProjects, getSettings, monthSpendCents } from "@/lib/queries";
 import { kindOf } from "@/lib/action-registry";
-import { ago, money } from "@/components/ui";
+import { Empty, ProjectAvatar, ago, money } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-const statusStyle: Record<string, string> = {
-  executed: "#4ade80", approved: "#7c9cff", pending: "#facc15", rejected: "#94a3b8", failed: "#f87171",
+const statusMeta: Record<string, { icon: React.ReactNode; cls: string }> = {
+  executed: { icon: <CheckCircle2 size={15} />, cls: "text-good" },
+  approved: { icon: <CircleDashed size={15} />, cls: "text-accent" },
+  pending: { icon: <Clock size={15} />, cls: "text-warn" },
+  rejected: { icon: <CircleSlash size={15} />, cls: "text-faint" },
+  failed: { icon: <XCircle size={15} />, cls: "text-bad" },
 };
 
 export default async function Approvals() {
@@ -14,31 +20,43 @@ export default async function Approvals() {
   const pname = (id: string | null) => projects.find((p) => p.id === id)?.name;
   const pending = actions.filter((a) => a.status === "pending");
   const handoff = actions.filter((a) => a.status === "approved");
+  const pct = Math.min(100, (spent / Math.max(1, settings.monthly_cap_cents)) * 100);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Approvals</h1>
+    <div className="fade-in space-y-7">
+      <header>
+        <h1 className="text-[28px] font-semibold tracking-tight">Approvals</h1>
+        <p className="mt-1 text-[14px] text-muted">Nothing risky happens until you say so. Everything Manager does is logged here.</p>
+      </header>
 
       <section>
-        <div className="label mb-2">Waiting for you · {pending.length}</div>
-        {pending.length === 0 && <div className="text-sm text-muted">Nothing needs approval.</div>}
-        <ul className="space-y-3">
+        <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Waiting for you</h2><span className="text-[13px] text-faint">{pending.length}</span></div>
+        {pending.length === 0 && <div className="card"><Empty icon={<ShieldCheck size={18} />} title="All clear" hint="Requests from you or the agent show up here." /></div>}
+        <ul className="grid gap-3 md:grid-cols-2">
           {pending.map((a) => (
-            <li key={a.id} className="card">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="chip">{kindOf(a.kind).label}</span>
-                {pname(a.project_id) && <span className="chip">{pname(a.project_id)}</span>}
-                {a.cost_cents > 0 && <span className="chip" style={{ color: "#facc15" }}>{money(a.cost_cents)}</span>}
-                <span className="ml-auto text-xs text-muted">by {a.requested_by} · {ago(a.created_at)}</span>
+            <li key={a.id} className="card flex flex-col !border-[rgba(255,200,87,.3)]">
+              <div className="flex items-center gap-2">
+                <span className="chip chip-warn">{kindOf(a.kind).label}</span>
+                {a.cost_cents > 0 && <span className="chip chip-bad">{money(a.cost_cents)}</span>}
+                <span className="ml-auto flex items-center gap-1 text-[12px] text-muted">
+                  {a.requested_by === "agent" ? <Bot size={12} /> : <User size={12} />}{a.requested_by} · {ago(a.created_at)}
+                </span>
               </div>
-              <div className="mt-2 font-semibold">{a.title}</div>
-              {a.reason && <div className="text-sm text-muted">{a.reason}</div>}
-              {Object.keys(a.payload).length > 0 && (
-                <pre className="mt-2 overflow-x-auto rounded-lg bg-panel2 p-2 text-xs text-muted">{JSON.stringify(a.payload, null, 2)}</pre>
+              <div className="mt-3 text-[16px] font-semibold">{a.title}</div>
+              {pname(a.project_id) && (
+                <div className="mt-1 flex items-center gap-2 text-[13px] text-muted"><ProjectAvatar name={pname(a.project_id)!} size={18} />{pname(a.project_id)}</div>
               )}
-              <div className="mt-3 flex gap-2">
-                <form action={decideAction.bind(null, a.id, true)} className="flex-1"><button className="btn btn-good w-full">Approve</button></form>
-                <form action={decideAction.bind(null, a.id, false)} className="flex-1"><button className="btn btn-bad w-full">Reject</button></form>
+              {a.reason && <div className="mt-2 text-[13.5px] text-muted">{a.reason}</div>}
+              {Object.keys(a.payload).length > 0 && (
+                <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-xl border border-line bg-bg2/60 p-3 text-[12.5px]">
+                  {Object.entries(a.payload).map(([k, v]) => (
+                    <Fragment key={k}><dt className="text-faint">{k}</dt><dd className="truncate">{String(v)}</dd></Fragment>
+                  ))}
+                </dl>
+              )}
+              <div className="mt-4 flex gap-2">
+                <form action={decideAction.bind(null, a.id, true)} className="flex-1"><button className="btn btn-good w-full !py-2.5">Approve</button></form>
+                <form action={decideAction.bind(null, a.id, false)} className="flex-1"><button className="btn btn-bad w-full !py-2.5">Reject</button></form>
               </div>
             </li>
           ))}
@@ -47,14 +65,14 @@ export default async function Approvals() {
 
       {handoff.length > 0 && (
         <section>
-          <div className="label mb-2">Approved, waiting to be carried out · {handoff.length}</div>
+          <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Approved, being carried out</h2><span className="text-[13px] text-faint">{handoff.length}</span></div>
           <ul className="space-y-2">
             {handoff.map((a) => (
-              <li key={a.id} className="card">
-                <div className="font-semibold">{a.title}</div>
-                <form action={markActionDone.bind(null, a.id)} className="mt-2 flex gap-2">
+              <li key={a.id} className="card flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="flex-1"><div className="font-medium">{a.title}</div><div className="text-[12px] text-muted">{kindOf(a.kind).label} · approved {ago(a.decided_at)}</div></div>
+                <form action={markActionDone.bind(null, a.id)} className="flex gap-2 md:w-[380px]">
                   <input name="note" placeholder="What happened? (optional)" />
-                  <button className="btn">Mark done</button>
+                  <button className="btn">Done</button>
                 </form>
               </li>
             ))}
@@ -63,33 +81,48 @@ export default async function Approvals() {
       )}
 
       <section className="card">
-        <div className="label mb-2">Guardrails</div>
-        <div className="mb-3 text-sm">Spent this month: <b>{money(spent)}</b> of {money(settings.monthly_cap_cents)}</div>
+        <div className="mb-4 flex items-center gap-2"><Gauge size={16} className="text-accent2" /><span className="font-semibold">Guardrails</span></div>
+        <div className="mb-5">
+          <div className="mb-1.5 flex justify-between text-[13px]"><span className="text-muted">Spent this month</span><span><b>{money(spent)}</b> <span className="text-muted">of {money(settings.monthly_cap_cents)}</span></span></div>
+          <div className="h-2 overflow-hidden rounded-full bg-line">
+            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct > 85 ? "var(--bad)" : pct > 60 ? "var(--warn)" : "var(--good)" }} />
+          </div>
+        </div>
         <form action={saveSettings} className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <label><span className="label">Per purchase cap $</span><input name="per_purchase_cap" type="number" step="1" defaultValue={settings.per_purchase_cap_cents / 100} /></label>
-          <label><span className="label">Monthly cap $</span><input name="monthly_cap" type="number" step="1" defaultValue={settings.monthly_cap_cents / 100} /></label>
-          <label><span className="label">Max active projects</span><input name="max_active_projects" type="number" min="1" defaultValue={settings.max_active_projects} /></label>
-          <label><span className="label">Focus block (min)</span><input name="focus_minutes" type="number" min="5" defaultValue={settings.focus_minutes} /></label>
+          <label className="space-y-1.5"><span className="label">Max per purchase $</span><input name="per_purchase_cap" type="number" step="1" min="0" defaultValue={settings.per_purchase_cap_cents / 100} /></label>
+          <label className="space-y-1.5"><span className="label">Monthly cap $</span><input name="monthly_cap" type="number" step="1" min="0" defaultValue={settings.monthly_cap_cents / 100} /></label>
+          <label className="space-y-1.5"><span className="label">Active projects</span><input name="max_active_projects" type="number" min="1" defaultValue={settings.max_active_projects} /></label>
+          <label className="space-y-1.5"><span className="label">Focus block min</span><input name="focus_minutes" type="number" min="5" defaultValue={settings.focus_minutes} /></label>
           <button className="btn col-span-2 md:col-span-4">Save guardrails</button>
         </form>
-        <p className="mt-2 text-xs text-muted">Anything over a cap is blocked automatically. Card details and passwords are never stored here.</p>
+        <p className="mt-3 text-[12px] text-faint">Anything over a cap is blocked automatically. Card numbers and passwords are never stored in Manager.</p>
       </section>
 
-      <section>
-        <div className="label mb-2">Audit log</div>
-        <ul className="divide-y divide-line text-sm">
-          {actions.map((a) => (
-            <li key={a.id} className="flex items-center gap-2 py-2">
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusStyle[a.status] }} />
-              <span className="min-w-0 flex-1 truncate">{a.title}</span>
-              {a.cost_cents > 0 && <span className="text-muted">{money(a.cost_cents)}</span>}
-              {a.result && "url" in a.result && <a href={String(a.result.url)} className="text-accent" target="_blank">open ↗</a>}
-              {a.result && "blocked" in a.result && <span className="text-xs text-red-400">{String(a.result.blocked)}</span>}
-              {a.result && "error" in a.result && <span className="max-w-40 truncate text-xs text-red-400">{String(a.result.error)}</span>}
-              <span className="w-20 shrink-0 text-right text-xs text-muted">{a.status} · {ago(a.created_at)}</span>
-            </li>
-          ))}
-          {actions.length === 0 && <li className="py-2 text-muted">No actions yet.</li>}
+      <section className="card">
+        <div className="mb-2 flex items-center gap-2"><ScrollText size={16} className="text-muted" /><span className="font-semibold">Audit log</span></div>
+        {actions.length === 0 && <Empty icon={<ScrollText size={18} />} title="No actions yet" />}
+        <ul className="divide-y divide-line text-[13.5px]">
+          {actions.map((a) => {
+            const m = statusMeta[a.status];
+            const r = a.result ?? {};
+            return (
+              <li key={a.id} className="flex items-center gap-3 py-2.5">
+                <span className={m.cls}>{m.icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate">{a.title}</div>
+                  <div className="truncate text-[12px] text-faint">
+                    {kindOf(a.kind).label}{pname(a.project_id) ? ` · ${pname(a.project_id)}` : ""} · {a.requested_by}
+                    {"blocked" in r && <span className="text-bad"> · blocked: {String(r.blocked)}</span>}
+                    {"error" in r && <span className="text-bad"> · {String(r.error)}</span>}
+                    {"note" in r && r.note ? <span> · {String(r.note)}</span> : null}
+                  </div>
+                </div>
+                {a.cost_cents > 0 && <span className="text-muted">{money(a.cost_cents)}</span>}
+                {"url" in r && <a href={String(r.url)} className="text-accent" target="_blank"><ExternalLink size={14} /></a>}
+                <span className="w-16 shrink-0 text-right text-[12px] text-muted">{ago(a.created_at)}</span>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </div>

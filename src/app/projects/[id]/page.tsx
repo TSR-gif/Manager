@@ -1,17 +1,23 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addTask, deleteTask, requestAction, saveProject, setTaskStatus } from "@/app/actions";
+import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History } from "lucide-react";
+import { addTask, requestAction, saveProject } from "@/app/actions";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
-import { SignalChips, ago } from "@/components/ui";
+import { Empty, PriorityBadge, ProjectAvatar, SignalChips, StatusDot, ago } from "@/components/ui";
+import { TaskItem } from "@/components/task-item";
 import type { Project } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const blank: Project = {
-  id: "", name: "", status: "idea", priority: 3, next_action: null, goal: null, notes: null,
+  id: "", name: "", status: "active", priority: 3, next_action: null, goal: null, notes: null,
   github_repo: null, vercel_project: null, deadline: null, last_touched_at: "", created_at: "",
 };
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block space-y-1.5"><span className="label">{label}</span>{children}</label>;
+}
 
 export default async function ProjectPage({
   params, searchParams,
@@ -23,113 +29,139 @@ export default async function ProjectPage({
   if (!p) notFound();
   const [allTasks, settings, actions] = await Promise.all([getTasks({ includeDone: true }), getSettings(), getActions()]);
   const tasks = allTasks.filter((t) => t.project_id === p.id);
+  const open = tasks.filter((t) => t.status !== "done");
+  const done = tasks.filter((t) => t.status === "done");
   const signals = isNew ? {} : await getSignals([p]);
   const s = signals[p.id];
-  const log = actions.filter((a) => a.project_id === p.id).slice(0, 10);
+  const log = actions.filter((a) => a.project_id === p.id).slice(0, 12);
 
   return (
-    <div className="space-y-5">
-      <Link href="/projects" className="text-sm text-muted">← Projects</Link>
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold">{isNew ? "New project" : p.name}</h1>
-        <SignalChips s={s} />
-        {s?.vercel?.url && <a className="text-sm text-accent" href={s.vercel.url} target="_blank">live site ↗</a>}
-        {p.github_repo && <a className="text-sm text-accent" href={`https://github.com/${p.github_repo}`} target="_blank">repo ↗</a>}
+    <div className="fade-in space-y-6">
+      <Link href="/projects" className="inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-text"><ArrowLeft size={14} /> Projects</Link>
+
+      <header className="flex flex-wrap items-center gap-4">
+        {!isNew && <ProjectAvatar name={p.name} size={54} />}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-[28px] font-semibold tracking-tight">{isNew ? "New project" : p.name}</h1>
+            {!isNew && <StatusDot status={p.status} />}
+          </div>
+          {!isNew && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <PriorityBadge p={p.priority} />
+              <span className="chip capitalize">{p.status}</span>
+              <SignalChips s={s} />
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {s?.vercel?.url && <a className="btn" href={s.vercel.url} target="_blank"><Globe size={15} /> Live</a>}
+          {p.github_repo && <a className="btn" href={`https://github.com/${p.github_repo}`} target="_blank"><GitBranch size={15} /> Repo <ExternalLink size={12} /></a>}
+        </div>
       </header>
 
+      {p.goal && !isNew && (
+        <div className="hero !p-4 text-[15px]"><span className="label mr-2">Goal</span>{p.goal}</div>
+      )}
+
       {cap && (
-        <div className="card text-sm" style={{ borderColor: "#facc15" }}>
-          You already have {settings.max_active_projects} active projects. Pause one first, or tick &quot;activate anyway&quot; below.
+        <div className="card flex items-start gap-3 !border-[rgba(255,200,87,.35)]">
+          <TriangleAlert size={18} className="mt-0.5 text-warn" />
+          <div className="text-[14px]">You already have {settings.max_active_projects} active projects. Pause one first, or tick <b>activate anyway</b> below.</div>
         </div>
       )}
 
-      <div className="grid gap-5 md:grid-cols-[1fr_1.1fr]">
-        <form action={saveProject} className="card space-y-3">
-          <input type="hidden" name="id" value={p.id} />
-          <label className="block"><span className="label">Name</span><input name="name" defaultValue={p.name} required /></label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block"><span className="label">Status</span>
-              <select name="status" defaultValue={p.status}>
-                {["active", "paused", "idea", "done", "archived"].map((x) => <option key={x}>{x}</option>)}
-              </select>
-            </label>
-            <label className="block"><span className="label">Priority</span>
-              <select name="priority" defaultValue={p.priority}>
-                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>P{x}{x === 1 ? " (top)" : ""}</option>)}
-              </select>
-            </label>
-          </div>
-          <label className="block"><span className="label">Goal</span><input name="goal" defaultValue={p.goal ?? ""} placeholder="What does done look like?" /></label>
-          <label className="block"><span className="label">Next action</span><input name="next_action" defaultValue={p.next_action ?? ""} /></label>
-          <label className="block"><span className="label">Deadline</span><input type="date" name="deadline" defaultValue={p.deadline ?? ""} /></label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block"><span className="label">GitHub repo</span><input name="github_repo" defaultValue={p.github_repo ?? ""} placeholder="TSR-gif/name" /></label>
-            <label className="block"><span className="label">Vercel project</span><input name="vercel_project" defaultValue={p.vercel_project ?? ""} /></label>
-          </div>
-          <label className="block"><span className="label">Notes</span><textarea name="notes" rows={4} defaultValue={p.notes ?? ""} /></label>
-          {cap && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="force" value="1" className="w-auto" /> activate anyway</label>}
-          <button className="btn btn-primary w-full">Save</button>
-          {!isNew && <div className="text-xs text-muted">Last touched {ago(p.last_touched_at)}</div>}
-        </form>
-
-        {!isNew && (
-          <div className="space-y-5">
+      <div className="grid gap-5 lg:grid-cols-[1.25fr_1fr]">
+        <div className="space-y-5">
+          {!isNew && (
             <section className="card">
-              <div className="label mb-2">Tasks</div>
-              <form action={addTask} className="mb-3 flex gap-2">
+              <div className="mb-3 flex items-center gap-2"><ListTodo size={16} className="text-accent" /><span className="font-semibold">Tasks</span><span className="text-[13px] text-faint">{open.length} open</span></div>
+              <form action={addTask} className="mb-2 flex gap-2">
                 <input type="hidden" name="project_id" value={p.id} />
-                <input name="title" placeholder="New task" autoComplete="off" required />
-                <input name="due" type="date" className="max-w-40" />
-                <button className="btn">+</button>
+                <input name="title" placeholder="Add a task…" autoComplete="off" required />
+                <input name="due" type="date" className="!w-40 shrink-0" />
+                <button className="btn">Add</button>
               </form>
-              <ul className="divide-y divide-line">
-                {tasks.map((t) => (
-                  <li key={t.id} className="flex items-center gap-2 py-2">
-                    <form action={setTaskStatus.bind(null, t.id, t.status === "done" ? "todo" : "done")}>
-                      <button className={`h-5 w-5 rounded-full border ${t.status === "done" ? "border-green-500 bg-green-600" : "border-muted"}`} aria-label="toggle" />
-                    </form>
-                    <span className={`flex-1 ${t.status === "done" ? "text-muted line-through" : ""}`}>{t.title}</span>
-                    {t.due && <span className="text-xs text-muted">{t.due}</span>}
-                    <form action={deleteTask.bind(null, t.id)}><button className="text-xs text-muted hover:text-red-400">✕</button></form>
-                  </li>
-                ))}
-              </ul>
+              {open.length === 0 && <Empty icon={<Sparkles size={18} />} title="No open tasks" hint="Break the next action into 2–3 small steps." />}
+              <ul className="-mx-2">{open.map((t) => <TaskItem key={t.id} t={t} />)}</ul>
+              {done.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer px-2 text-[12.5px] text-muted">{done.length} completed</summary>
+                  <ul className="-mx-2 mt-1">{done.slice(0, 20).map((t) => <TaskItem key={t.id} t={t} compact />)}</ul>
+                </details>
+              )}
             </section>
+          )}
 
+          {!isNew && (
             <section className="card">
-              <div className="label mb-2">Ask Manager to do something</div>
+              <div className="mb-1 flex items-center gap-2"><Send size={16} className="text-accent2" /><span className="font-semibold">Ask Manager to do something</span></div>
+              <p className="mb-3 text-[13px] text-muted">GitHub issues run straight away. Everything else waits for your approval.</p>
               <form action={requestAction} className="space-y-2">
                 <input type="hidden" name="project_id" value={p.id} />
-                <select name="kind" defaultValue={p.github_repo ? "github.create_issue" : "other"}>
-                  {p.github_repo && <option value="github.create_issue">Create GitHub issue (runs now)</option>}
-                  {p.vercel_project && <option value="vercel.redeploy">Redeploy on Vercel (needs approval)</option>}
-                  <option value="signup">Sign up for a service (needs approval)</option>
-                  <option value="purchase">Buy something (needs approval)</option>
-                  <option value="other">Something else (needs approval)</option>
-                </select>
                 <input type="hidden" name="repo" value={p.github_repo ?? ""} />
                 <input type="hidden" name="project" value={p.vercel_project ?? ""} />
+                <select name="kind" defaultValue={p.github_repo ? "github.create_issue" : "other"}>
+                  {p.github_repo && <option value="github.create_issue">Create a GitHub issue</option>}
+                  {p.vercel_project && <option value="vercel.redeploy">Redeploy production on Vercel</option>}
+                  <option value="signup">Sign up for a service</option>
+                  <option value="purchase">Buy something</option>
+                  <option value="email.send">Send an email</option>
+                  <option value="pc.session">Do something on my PC</option>
+                  <option value="other">Something else</option>
+                </select>
                 <input name="title" placeholder="What should happen?" required />
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-[1fr_9rem] gap-2">
                   <input name="url" placeholder="Link (optional)" />
-                  <input name="cost" type="number" step="0.01" min="0" placeholder="Cost $ (if any)" />
+                  <input name="cost" type="number" step="0.01" min="0" placeholder="Cost $" />
                 </div>
                 <button className="btn w-full">Queue it</button>
               </form>
             </section>
+          )}
 
-            {log.length > 0 && (
-              <section className="card">
-                <div className="label mb-2">Activity</div>
-                <ul className="space-y-1 text-sm">
-                  {log.map((a) => (
-                    <li key={a.id} className="flex justify-between gap-2"><span className="truncate">{a.title}</span><span className="text-muted">{a.status}</span></li>
-                  ))}
-                </ul>
-              </section>
-            )}
+          {log.length > 0 && (
+            <section className="card">
+              <div className="mb-2 flex items-center gap-2"><History size={16} className="text-muted" /><span className="font-semibold">Activity</span></div>
+              <ul className="divide-y divide-line text-[13.5px]">
+                {log.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between gap-2 py-2">
+                    <span className="truncate">{a.title}</span>
+                    <span className="shrink-0 text-[12px] text-muted">{a.status} · {ago(a.created_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+
+        <form action={saveProject} className="card h-fit space-y-4">
+          <div className="flex items-center gap-2"><Settings2 size={16} className="text-muted" /><span className="font-semibold">{isNew ? "Details" : "Settings"}</span></div>
+          <input type="hidden" name="id" value={p.id} />
+          <Field label="Name"><input name="name" defaultValue={p.name} required placeholder="e.g. Clothing Brand" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Status">
+              <select name="status" defaultValue={p.status}>
+                {["active", "paused", "idea", "done", "archived"].map((x) => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
+              </select>
+            </Field>
+            <Field label="Priority">
+              <select name="priority" defaultValue={p.priority}>
+                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>P{x}{x === 1 ? " · top" : x === 5 ? " · someday" : ""}</option>)}
+              </select>
+            </Field>
           </div>
-        )}
+          <Field label="Goal"><input name="goal" defaultValue={p.goal ?? ""} placeholder="What does done look like?" /></Field>
+          <Field label="Next action"><input name="next_action" defaultValue={p.next_action ?? ""} placeholder="The very next physical step" /></Field>
+          <Field label="Deadline"><input type="date" name="deadline" defaultValue={p.deadline ?? ""} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="GitHub repo"><input name="github_repo" defaultValue={p.github_repo ?? ""} placeholder="TSR-gif/name" /></Field>
+            <Field label="Vercel project"><input name="vercel_project" defaultValue={p.vercel_project ?? ""} placeholder="project-name" /></Field>
+          </div>
+          <Field label="Notes"><textarea name="notes" rows={5} defaultValue={p.notes ?? ""} placeholder="Links, context, anything" /></Field>
+          {cap && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="force" value="1" className="!w-auto" /> Activate anyway</label>}
+          <button className="btn btn-primary w-full">{isNew ? "Create project" : "Save changes"}</button>
+        </form>
       </div>
     </div>
   );

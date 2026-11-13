@@ -37,7 +37,8 @@ async function touch(projectId: string | null) {
 export async function saveProject(form: FormData) {
   const id = str(form, "id");
   const status = str(form, "status") ?? "active";
-  if (status === "active") {
+  const prev = id ? (await db().from("projects").select("status").eq("id", id).maybeSingle()).data : null;
+  if (status === "active" && prev?.status !== "active") {
     const s = await getSettings();
     const { count } = await db().from("projects").select("id", { count: "exact", head: true })
       .eq("status", "active").neq("id", id ?? "00000000-0000-0000-0000-000000000000");

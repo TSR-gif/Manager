@@ -3,7 +3,7 @@ import { COOKIE, sessionToken } from "@/lib/auth";
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname.startsWith("/login") || pathname === "/manifest.webmanifest" || pathname.startsWith("/icon") || pathname === "/offline.html") {
+  if (pathname.startsWith("/login") || pathname === "/manifest.webmanifest" || pathname.startsWith("/icon") || pathname.startsWith("/apple-icon") || pathname === "/offline.html") {
     return NextResponse.next();
   }
   if (!process.env.APP_PASSWORD) {

@@ -3,8 +3,10 @@
 Running log of everything built, decided and waiting on Thomas. Newest entries at the bottom of each day.
 
 ## Waiting on Thomas
-- [ ] **Supabase project "Manager"** (free, Sydney): Supabase's confirm prompt timed out twice (05:12, 05:14 UTC). Needs his tap.
-- [ ] **Secrets for Vercel** once deployed: `APP_PASSWORD` (login), `GITHUB_TOKEN` (fine-grained PAT, repo read + issues write), `VERCEL_TOKEN`, later `ANTHROPIC_API_KEY`.
+- [x] Supabase project "Manager" created by Thomas (ref `ilfdeyizixidblqqrhzu`, in a different Supabase org than the connector can see).
+- [ ] **Run `setup.sql`** in Supabase SQL Editor (tables + seed). Copy in project files `manager/setup.sql`.
+- [ ] **Vercel env vars** on project `manager`: `SUPABASE_SERVICE_ROLE_KEY`, `APP_PASSWORD`. Later: `GITHUB_TOKEN` (fine-grained PAT), `VERCEL_TOKEN`, `ANTHROPIC_API_KEY`.
+- [ ] Supabase org shows "Grace period is over" banner: check Billing → Usage, risk of all projects in that org stopping.
 - [ ] Optional: turn on his browser on the PC so research isn't limited.
 
 ## 2026-11-13
@@ -44,3 +46,12 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - Motion: auto-scheduling tasks into the calendar.
 - Linear: keyboard-first command palette, dense but calm UI.
 - Things 3: "Today" vs "This Evening" split for personal tasks.
+
+**05:16–05:30 — UI pass 1 + deploy setup**
+- Redesigned all screens: dark theme with violet/cyan accents, Geist font, lucide icons, project avatars (colour from name), stat tiles, hero "Work on this now" card with circular focus timer, ranked "Up next" with score bars, Everyday split into Today/Later.
+- Command bar: Ctrl/Cmd+K anywhere, + button on phone. `idea: …` → inbox, `#proj …` → project task, else everyday.
+- Phone: bottom tab bar with approval badge, floating capture button, safe-area padding.
+- Fixed: editing an already-active project no longer trips the active-project cap; cap default raised to 5 (he has 10 active — the app nudges him to pause some).
+- Tested end to end locally: capture idea via Ctrl+K, queue $20 purchase → pending → approved (spend meter shows $20/$200), $80 purchase auto-blocked by $50 per-purchase cap.
+- Created Vercel project `manager` (prj_RiqbNg45bas28cUSSi1YZZol4DYh) linked to TSR-gif/manager; pushes to main deploy. Set SUPABASE_URL, VERCEL_TEAM_ID, AUTH_SECRET.
+- Supabase MCP `create_project` prompt never reached Thomas's phone (timed out/cancelled 3×) → he created it manually.

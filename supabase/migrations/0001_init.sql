@@ -68,7 +68,7 @@ create index if not exists actions_status_idx on actions(status, created_at desc
 
 create table if not exists settings (
   id int primary key default 1 check (id = 1),
-  max_active_projects int not null default 3,
+  max_active_projects int not null default 5,
   per_purchase_cap_cents int not null default 5000,
   monthly_cap_cents int not null default 20000,
   focus_minutes int not null default 50,

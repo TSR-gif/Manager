@@ -43,3 +43,24 @@ export async function monthSpendCents(): Promise<number> {
   );
   return rows.reduce((s, r) => s + r.cost_cents, 0);
 }
+
+/** Tasks completed and focus minutes since local midnight (Melbourne). */
+export async function todayStats(): Promise<{ done: number; focusMinutes: number }> {
+  const midnight = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Australia/Melbourne" }).replace(/,.*/, ""),
+  );
+  // Melbourne midnight expressed in UTC: compute offset between server time and Melbourne
+  const now = new Date();
+  const melNow = new Date(now.toLocaleString("en-US", { timeZone: "Australia/Melbourne" }));
+  const offset = melNow.getTime() - now.getTime();
+  const since = new Date(midnight.getTime() - offset).toISOString();
+  const [{ count }, sessions] = await Promise.all([
+    db().from("tasks").select("id", { count: "exact", head: true }).eq("status", "done").gte("done_at", since),
+    db().from("focus_sessions").select("started_at,ended_at,planned_minutes").gte("started_at", since),
+  ]);
+  const focusMinutes = (sessions.data ?? []).reduce((m: number, s: { started_at: string; ended_at: string | null }) => {
+    const end = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
+    return m + Math.max(0, (end - new Date(s.started_at).getTime()) / 60000);
+  }, 0);
+  return { done: count ?? 0, focusMinutes: Math.round(focusMinutes) };
+}
