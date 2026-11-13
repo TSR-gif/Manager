@@ -51,7 +51,8 @@ export async function findServices(): Promise<string> {
   return `# Project folders on this PC (${repos.length})\n${lines.join("\n") || "None found."}\n\n# MyManager's own sign-ins on this PC\nThese are the command-line tools MyManager uses. They are separate from Thomas's browser: being signed in on Chrome doesn't sign these in. Say so when you tell him one is signed out.\n${tools.join("\n")}\n\nTo sign in to a service, plan a handoff step in draft_runbook with the command (e.g. "npx vercel login", "npx supabase login"): it opens a window and Thomas finishes the sign-in himself.`;
 }
 
-const lastLine = (t: string) => t.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).pop() ?? "";
+// (the Vercel CLI prints a "Vercel CLI 65.x" banner on stderr, which lands after the answer)
+const lastLine = (t: string) => t.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !/^Vercel CLI \d/i.test(x)).pop() ?? "";
 const missing = (t: string) => !t || /not recognized|not found|ENOENT|missing packages|could not determine executable/i.test(t);
 
 /** A tool that's on the PC, or already in npx's cache. `npx --no-install` never downloads anything. */
