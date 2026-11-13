@@ -56,7 +56,9 @@ export function scoreProject(
   }
 
   const open = tasks.filter((t) => t.project_id === p.id && t.status !== "done");
-  const overdueTasks = open.filter((t) => t.due && new Date(t.due).getTime() < now).length;
+  // compare calendar dates in Melbourne, so a task due today isn't "overdue"
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne" }).format(new Date(now));
+  const overdueTasks = open.filter((t) => t.due && t.due.slice(0, 10) < today).length;
   if (overdueTasks) {
     score += 10 * Math.min(overdueTasks, 3);
     reasons.push(`${overdueTasks} overdue task${overdueTasks > 1 ? "s" : ""}`);

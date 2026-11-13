@@ -13,6 +13,17 @@ import type { AgentEvent } from "./run";
  * Runs the assistant through the Claude Code app already signed in on this PC (`claude -p`),
  * with Manager's own tools exposed over a local MCP bridge (scripts/mcp-manager.mjs).
  */
+async function activePcSession(): Promise<{ title: string; until: string } | null> {
+  const since = new Date(Date.now() - 2 * 3600_000).toISOString();
+  const { data } = await db().from("actions").select("title,decided_at").eq("kind", "pc.session").eq("status", "approved")
+    .gte("decided_at", since).order("decided_at", { ascending: false }).limit(1);
+  const a = data?.[0];
+  if (!a) return null;
+  const until = new Date(new Date(a.decided_at).getTime() + 2 * 3600_000)
+    .toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: "Australia/Melbourne" });
+  return { title: a.title, until };
+}
+
 export async function runClaudeCode(
   goal: string,
   system: string,
@@ -46,22 +57,34 @@ export async function runClaudeCode(
   const root = process.cwd();
   const port = process.env.PORT ?? "3000";
   const cfgPath = path.join(os.tmpdir(), `manager-mcp-${process.pid}.json`);
-  fs.writeFileSync(cfgPath, JSON.stringify({
-    mcpServers: {
-      manager: {
-        command: process.execPath,
-        args: [path.join(root, "scripts", "mcp-manager.mjs")],
-        env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://localhost:${port}`, MANAGER_KEY: await sessionToken() },
-      },
+  const servers: Record<string, unknown> = {
+    manager: {
+      command: process.execPath,
+      args: [path.join(root, "scripts", "mcp-manager.mjs")],
+      env: { MANAGER_URL: process.env.MANAGER_URL ?? `http://localhost:${port}`, MANAGER_KEY: await sessionToken() },
     },
-  }));
-
+  };
   const allowed = [...AGENT_TOOLS.map((t) => `mcp__manager__${t.name}`), "WebSearch", "WebFetch"];
+  const denied = ["Bash", "Edit", "Write", "NotebookEdit", "Task"];
+
+  // PC control only while Thomas has an approved "Use your PC" request (approved in the last 2 hours, not marked done).
+  const pc = await activePcSession();
+  if (pc) {
+    const npx = (pkg: string, ...rest: string[]) => process.platform === "win32"
+      ? { command: "cmd", args: ["/c", "npx", "-y", pkg, ...rest] }
+      : { command: "npx", args: ["-y", pkg, ...rest] };
+    servers.desktop = npx("agent-desktop@1.3.0", "mcp");          // any desktop app, via accessibility tree
+    servers.browser = npx("@playwright/mcp@0.0.85");               // websites, in its own browser window
+    allowed.push("mcp__desktop", "mcp__browser");
+    denied.push("mcp__browser__browser_run_code_unsafe", "mcp__browser__browser_evaluate");
+    system += `\n\nPC SESSION APPROVED until ${pc.until}: "${pc.title}". You may use the desktop_* tools (desktop apps: snapshot with -i first, act on refs from that snapshot, snapshot again to verify) and browser_* tools (websites) for this purpose only. Never type passwords, card numbers or one-time codes: stop at any login, payment or 2FA screen, leave it open, and tell Thomas to finish it. Don't close his unsaved work. When finished, say what you did on the PC.`;
+  }
+  fs.writeFileSync(cfgPath, JSON.stringify({ mcpServers: servers }));
   const args = [
     "-p", "--output-format", "stream-json", "--verbose",
     "--mcp-config", cfgPath, "--strict-mcp-config",
     "--allowedTools", allowed.join(","),
-    "--disallowedTools", "Bash,Edit,Write,NotebookEdit,Task",
+    "--disallowedTools", denied.join(","),
     "--append-system-prompt-file", writeTemp("manager-system.txt", system),
   ];
   if (ccSession) args.push("--resume", ccSession);

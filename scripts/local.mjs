@@ -25,6 +25,8 @@ if (!fs.existsSync(envFile)) {
     "GITHUB_TOKEN=",
     "VERCEL_TOKEN=",
     "VERCEL_TEAM_ID=team_IiSZJwc7Mj1Edzz5rQ3gFRBA",
+    "# Optional: Up Bank spending tile (Up app > Data sharing > Personal Access Token)",
+    "UP_TOKEN=",
     "# Optional: phone approvals. Make a bot with @BotFather in Telegram and paste its token here.",
     "TELEGRAM_BOT_TOKEN=",
     "",

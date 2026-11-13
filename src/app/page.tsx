@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, Coffee, Flame, Lightbulb, ListTodo, RefreshCcw, ShieldCheck, Sparkles, Timer, Zap } from "lucide-react";
+import { ArrowRight, CheckCircle2, Coffee, Flame, Lightbulb, ListTodo, RefreshCcw, ShieldCheck, Sparkles, Timer, Wallet, Zap } from "lucide-react";
 import { addTask, endFocus, startFocus } from "./actions";
 import { nextTasks, rankProjects } from "@/lib/focus";
 import { getActions, getActiveFocus, getIdeas, getProjects, getSettings, getTasks, todayStats } from "@/lib/queries";
@@ -9,8 +9,11 @@ import { FocusTimer } from "@/components/focus-timer";
 import { TaskItem } from "@/components/task-item";
 import { OpenCommandButton } from "@/components/open-command";
 import { AskBar } from "@/components/ask-bar";
+import { getMoney } from "@/lib/up";
 
 export const dynamic = "force-dynamic";
+
+const dollars = (c?: number) => `$${Math.round((c ?? 0) / 100).toLocaleString("en-AU")}`;
 
 function Stat({ icon, label, value, href, tone }: { icon: React.ReactNode; label: string; value: string | number; href?: string; tone?: string }) {
   const inner = (
@@ -29,7 +32,7 @@ export default async function Today() {
   const [projects, tasks, focus, pending, inbox, settings, stats] = await Promise.all([
     getProjects(), getTasks(), getActiveFocus(), getActions(["pending"]), getIdeas("inbox"), getSettings(), todayStats(),
   ]);
-  const signals = await getSignals(projects.filter((p) => p.status === "active"));
+  const [signals, money] = await Promise.all([getSignals(projects.filter((p) => p.status === "active")), getMoney()]);
   const ranked = rankProjects(projects, tasks, signals);
   const top = ranked[0];
   const focusProject = focus?.project_id ? projects.find((p) => p.id === focus.project_id) : null;
@@ -66,6 +69,22 @@ export default async function Today() {
         <Stat icon={<ShieldCheck size={18} />} label="To approve" value={pending.length} href="/approvals" tone={pending.length ? "var(--warn)" : "var(--muted)"} />
         <Stat icon={<Lightbulb size={18} />} label="Ideas to triage" value={inbox.length} href="/inbox" tone="var(--accent)" />
       </div>
+
+      {money.configured && (
+        <section className="card flex flex-wrap items-center gap-x-6 gap-y-3 !p-4">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-[color-mix(in_srgb,var(--good)_15%,transparent)] text-good"><Wallet size={18} /></div>
+            <div><div className="text-[12px] text-muted">Up balance</div><div className="text-[18px] font-semibold tabular-nums">{money.error ? "-" : dollars(money.balanceCents)}</div></div>
+          </div>
+          {money.error ? <span className="text-[13px] text-bad">{money.error}</span> : (
+            <>
+              <div><div className="text-[12px] text-muted">Spent 7 days</div><div className="text-[15px] font-semibold tabular-nums">{dollars(money.spent7dCents)}</div></div>
+              <div><div className="text-[12px] text-muted">Spent 30 days</div><div className="text-[15px] font-semibold tabular-nums">{dollars(money.spent30dCents)}</div></div>
+              <div className="flex flex-wrap gap-1.5">{money.topCategories?.map((c) => <span key={c.name} className="chip">{c.name} {dollars(c.cents)}</span>)}</div>
+            </>
+          )}
+        </section>
+      )}
 
       {/* THE ONE THING */}
       <section className="hero">

@@ -1,6 +1,7 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import { db, unwrap } from "@/lib/db";
+import { getMoney } from "@/lib/up";
 import { queueAction } from "@/app/actions";
 import type { Project, Task } from "@/lib/types";
 
@@ -77,7 +78,7 @@ export const AGENT_TOOLS: Tool[] = [
   {
     name: "request_approval",
     description:
-      "Queue an action that needs Thomas's approval before it happens: signing up for a service, paying for anything, sending an email, redeploying, deleting things, or using his PC. It does NOT run now: it lands in his Approvals screen. Always include the cost in dollars (0 if free) and a clear reason. Never ask for or include card numbers or passwords.",
+      "Queue an action that needs Thomas's approval before it happens: signing up for a service, paying for anything, sending an email, redeploying, deleting things, or using his PC. It does NOT run now: it lands in his Approvals screen. Always include the cost in dollars (0 if free) and a clear reason. Never ask for or include card numbers or passwords. To control his PC (desktop apps or websites, e.g. to fill a signup form), request kind pc.session with the exact purpose; once he approves, your next turn gets desktop and browser tools for 2 hours. For purchases, prepare everything up to the payment step; Thomas pays himself.",
     input_schema: {
       type: "object",
       properties: {
@@ -118,11 +119,12 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           db().from("ideas").select("id,text").eq("status", "inbox").limit(50),
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
         ]);
+        const money = await getMoney();
         const names = new Map((projects.data ?? []).map((p: { id: string; name: string }) => [p.id, p.name] as const));
         const t = (tasks.data ?? []).map((x: Pick<Task, "id" | "title" | "status" | "priority" | "due" | "project_id">) => ({ ...x, project: x.project_id ? names.get(x.project_id) : "everyday", project_id: undefined }));
         return {
           label: "Read your projects and tasks",
-          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data }),
+          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}) }),
         };
       }
       case "create_task": {
