@@ -548,7 +548,8 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
       case "save_project_brief": {
         const p = await findProject(input.project_name as string);
         if (!p) return noProject(input.project_name);
-        await db().from("projects").update({ brief: String(input.brief).slice(0, 12000), brief_updated_at: new Date().toISOString(), brief_edited_by_you: false }).eq("id", p.id);
+        const { error } = await db().from("projects").update({ brief: String(input.brief).slice(0, 12000), brief_updated_at: new Date().toISOString(), brief_edited_by_you: false }).eq("id", p.id);
+        if (error) return { label: "Couldn't save the brief", result: `Not saved: ${error.message}`, isError: true };
         const { writeNotes } = await import("@/lib/project-notes");
         await writeNotes(p.id).catch(() => "");
         return { label: `Updated the ${p.name} brief`, result: "Saved. It shows on the project page." };
@@ -655,10 +656,15 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const branch = `mymanager/${shortId(m.id)}`;
         const sum = await branchSummary(m.work_dir, branch);
         if (!sum.log) return { label: "Nothing to push", result: `The branch ${branch} has no new commits.`, isError: true };
+        // The approval is for this exact commit: if the branch moves before Thomas says yes, nothing is pushed.
+        const { execFile } = await import("node:child_process");
+        const sha = await new Promise<string>((res) => execFile("git", ["-C", m.work_dir, "rev-parse", `refs/heads/${branch}`], { windowsHide: true }, (e, out) => res(e ? "" : out.trim())));
+        if (!/^[0-9a-f]{40}$/.test(sha)) return { label: "Nothing to push", result: `Couldn't read the latest commit on ${branch}.`, isError: true };
         const a = await queueAction({
-          kind: "code.push", title: `Push ${branch} to GitHub`, requested_by: "agent", project_id: m.project_id, cost_cents: 0,
+          kind: "code.push", requested_by: "agent", project_id: m.project_id, cost_cents: 0,
           reason: `${m.goal}. ${sum.stat || ""}`.trim(),
-          payload: { mission_id: m.id, dir: m.work_dir, branch, changes: sum.log.slice(0, 1500) },
+          title: `Push ${branch} (commit ${sha.slice(0, 7)}) to GitHub`,
+          payload: { mission_id: m.id, dir: m.work_dir, branch, sha, changes: sum.log.slice(0, 1500) },
         });
         return { label: "Asked you to push the work", result: `Waiting in Approvals (${a.status}). Once pushed, Thomas reviews and merges it on GitHub himself.` };
       }

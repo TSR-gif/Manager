@@ -46,11 +46,12 @@ async function notifyPending() {
   const pending = await mgr("pending");
   for (const a of pending) {
     if (state.notified.includes(a.id)) continue;
-    await tg("sendMessage", {
+    // Only counted as sent once Telegram took it; a failed send is tried again on the next pass.
+    const sent = await tg("sendMessage", {
       chat_id: chatId, text: approvalText(a), parse_mode: "HTML",
       reply_markup: { inline_keyboard: [[{ text: "✅ Approve", callback_data: `ap:${a.id}` }, { text: "✋ Deny", callback_data: `dn:${a.id}` }], ...(PUBLIC ? [[{ text: "Open Approvals", url: `${PUBLIC}/approvals` }]] : [])] },
-    }).catch((e) => console.log(`[bot] ${e.message}`));
-    state.notified.push(a.id);
+    }).then(() => true, (e) => { console.log(`[bot] ${e.message}`); return false; });
+    if (sent) state.notified.push(a.id);
   }
   state.notified = state.notified.slice(-300);
   save();
@@ -59,7 +60,7 @@ async function notifyPending() {
 /** Runs the assistant through Manager's own /api/agent stream and returns the final summary. */
 async function ask(text) {
   const r = await fetch(`${BASE}/api/agent`, {
-    method: "POST", headers: { "Content-Type": "application/json", Cookie: `mgr_session=${KEY}` },
+    method: "POST", headers: { "Content-Type": "application/json", "x-manager-key": KEY },
     body: JSON.stringify({ goal: text, runId: state.runId ?? undefined }),
   });
   if (!r.ok || !r.body) throw new Error(`MyManager ${r.status}`);
@@ -148,18 +149,21 @@ async function onCallback(q) {
   }
 }
 
+let turns = Promise.resolve();
+let pendingBusy = false;
 async function main() {
   const me = await tg("getMe");
   chatId = (await mgr("settings").catch(() => ({})))?.telegram_chat_id ?? null;
   console.log(`Telegram bot @${me.username} running.${chatId ? " Paired." : " Not paired: send it /start and the pair code shown in MyManager's Settings."}`);
-  setInterval(() => notifyPending().catch((e) => console.log(`[bot] ${e.message}`)), 15000);
+  setInterval(() => { if (pendingBusy) return; pendingBusy = true; notifyPending().catch((e) => console.log(`[bot] ${e.message}`)).finally(() => { pendingBusy = false; }); }, 15000);
   for (;;) {
     try {
       const updates = await tg("getUpdates", { offset: state.offset, timeout: 30, allowed_updates: ["message", "callback_query"] });
       for (const u of updates) {
         state.offset = u.update_id + 1;
         save();
-        if (u.message) onMessage(u.message).catch((e) => console.log(`[bot] ${e.message}`));
+        // One message at a time, in order, so two quick messages can't run the assistant at once on the same chat.
+        if (u.message) turns = turns.then(() => onMessage(u.message)).catch((e) => console.log(`[bot] ${e.message}`));
         if (u.callback_query) onCallback(u.callback_query).catch((e) => console.log(`[bot] ${e.message}`));
       }
     } catch (e) {

@@ -100,7 +100,7 @@ test("a run's tool pass works only for that run, expires, and isn't the helper k
 
 test("the tool pass is only accepted by the tool route; approvals need the helper key or the login", () => {
   const mw = fs.readFileSync(path.join(ROOT, "src", "middleware.ts"), "utf8");
-  assert.match(mw, /\["\/api\/bot", "\/api\/proactive"\]\.includes\(pathname\) && sameText\(req\.headers\.get\("x-manager-key"\)/);
+  assert.match(mw, /\["\/api\/bot", "\/api\/proactive", "\/api\/agent"\]\.includes\(pathname\) && sameText\(req\.headers\.get\("x-manager-key"\)/);
   const bot = fs.readFileSync(path.join(ROOT, "src", "app", "api", "bot", "route.ts"), "utf8");
   assert.doesNotMatch(bot, /x-manager-tool|checkToolToken/);
   const cc = fs.readFileSync(path.join(ROOT, "src", "lib", "agent", "claude-code.ts"), "utf8");
@@ -118,7 +118,7 @@ before(async () => {
   dbDir = fs.mkdtempSync(path.join(TMP, "mm-db-"));
   const port = 39000 + Math.floor(Math.random() * 2000);
   base = `http://127.0.0.1:${port}`;
-  dbProc = spawn(process.execPath, [path.join(ROOT, "scripts", "dev-rest.mjs")], { env: { ...process.env, LOCALDB_DIR: path.join(dbDir, "db"), PORT_DB: String(port), SUPABASE_SERVICE_ROLE_KEY: KEY }, stdio: ["ignore", "pipe", "pipe"] });
+  dbProc = spawn(process.execPath, [path.join(ROOT, "scripts", "dev-rest.mjs")], { env: { ...process.env, LOCALDB_DIR: path.join(dbDir, "db"), LOCALDB_BACKUPS: path.join(dbDir, "backups"), PORT_DB: String(port), SUPABASE_SERVICE_ROLE_KEY: KEY }, stdio: ["ignore", "pipe", "pipe"] });
   await new Promise((resolve, reject) => {
     let out = "";
     const t = setTimeout(() => reject(new Error(`database didn't start: ${out}`)), 90_000);
@@ -139,13 +139,16 @@ test("the database refuses requests without its key", async () => {
 });
 
 test("runbook tables have row-level security like the rest", async () => {
-  // checked through the app's own SQL function surface: the migration has to have enabled it
   const sql = fs.readFileSync(path.join(ROOT, "supabase", "migrations", "0020_review_fixes.sql"), "utf8");
   assert.match(sql, /alter table runbooks enable row level security/);
   assert.match(sql, /alter table runbook_log enable row level security/);
   const all = fs.readdirSync(path.join(ROOT, "supabase", "migrations")).map((f) => fs.readFileSync(path.join(ROOT, "supabase", "migrations", f), "utf8")).join("\n");
   const tables = [...all.matchAll(/create table (?:if not exists )?([a-z_]+)/gi)].map((m) => m[1]);
   for (const t of tables) assert.match(all, new RegExp(`alter table ${t} enable row level security`), `${t} needs row-level security`);
+  // and in a freshly migrated database
+  const rows = await (await call("pg_class?select=relname,relrowsecurity&relname=in.(runbooks,runbook_log)")).json();
+  assert.equal(rows.length, 2);
+  for (const r of rows) assert.equal(r.relrowsecurity, true, r.relname);
 });
 
 test("five $50 requests at once can't reserve more than the $200 a month", async () => {
@@ -192,4 +195,43 @@ test("money counts in the month it was approved, in Melbourne time", async () =>
 test("the database only runs the functions it lists", async () => {
   const r = await call("rpc/pg_sleep", { method: "POST", body: JSON.stringify({ p_seconds: 1 }) });
   assert.equal(r.status, 404);
+});
+
+test("two invoices at once can't bill the same hours twice, and numbers never repeat", async () => {
+  const [p] = await (await call("projects", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ name: `Invoice test ${Date.now()}`, hourly_rate_cents: 10000 }) })).json();
+  await call("time_entries", { method: "POST", body: JSON.stringify([{ project_id: p.id, minutes: 60 }, { project_id: p.id, minutes: 30 }]) });
+  const made = (await Promise.all([1, 2, 3].map(() => rpc("mm_create_invoice", { p_project: p.id, p_fixed_cents: 0, p_note: null })))).flat();
+  assert.equal(made.length, 1, "only one invoice gets the hours");
+  assert.equal(made[0].amount_cents, 15000);
+  const fixed = (await Promise.all([1, 2].map(() => rpc("mm_create_invoice", { p_project: p.id, p_fixed_cents: 5000, p_note: "fixed" })))).flat();
+  const numbers = [...made, ...fixed].map((i) => i.number);
+  assert.equal(new Set(numbers).size, numbers.length, `numbers repeat: ${numbers}`);
+});
+
+test("a backup can be brought back, and restoring never overwrites the current database", async () => {
+  await call("ideas", { method: "POST", body: JSON.stringify({ text: "backup marker" }) });
+  dbProc.kill();
+  await new Promise((r) => setTimeout(r, 1500));
+  // starting again takes the day's backup (the first start was a fresh database, so there wasn't one yet)
+  const env = { ...process.env, LOCALDB_DIR: path.join(dbDir, "db"), LOCALDB_BACKUPS: path.join(dbDir, "backups"), PORT_DB: String(Number(new URL(base).port) + 1), SUPABASE_SERVICE_ROLE_KEY: KEY };
+  const start = (e, args = []) => new Promise((resolve) => {
+    const p = spawn(process.execPath, [path.join(ROOT, "scripts", "dev-rest.mjs"), ...args], { env: e, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    const on = (d) => { out += d; if (out.includes("database ready")) resolve({ p, out }); };
+    p.stdout.on("data", on); p.stderr.on("data", on);
+    p.on("exit", (code) => resolve({ p, out, code }));
+  });
+  const second = await start(env);
+  assert.match(second.out, /backed up the database/);
+  second.p.kill();
+  await new Promise((r) => setTimeout(r, 1500));
+  const file = path.join(dbDir, "backups", fs.readdirSync(path.join(dbDir, "backups")).find((f) => f.endsWith(".tar.gz")));
+  const refused = await start(env, ["--restore", file]);
+  assert.equal(refused.code, 1, "won't restore over an existing database");
+  const env2 = { ...env, LOCALDB_DIR: path.join(dbDir, "restored"), PORT_DB: String(Number(env.PORT_DB) + 1) };
+  const restored = await start(env2, ["--restore", file]);
+  try {
+    const r = await fetch(`http://127.0.0.1:${env2.PORT_DB}/ideas?text=eq.backup%20marker`, { headers: { apikey: KEY } });
+    assert.equal((await r.json()).length, 1);
+  } finally { restored.p.kill(); }
 });

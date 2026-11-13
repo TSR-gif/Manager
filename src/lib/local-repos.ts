@@ -123,9 +123,15 @@ export async function branchSummary(dir: string, branch: string) {
 }
 
 /** Push a MyManager work branch to GitHub (only ever called from an approved "code.push" action). */
-export async function pushBranch(dir: string, branch: string) {
+export async function pushBranch(dir: string, branch: string, sha?: string) {
   if (!/^mymanager\/[a-z0-9-]+$/i.test(branch)) throw new Error("Only MyManager work branches can be pushed this way.");
-  await git(dir, "push", "-u", "origin", branch);
+  // Thomas approved one exact commit. If the branch has moved since, push nothing and ask again.
+  if (sha) {
+    const now = (await git(dir, "rev-parse", `refs/heads/${branch}`)).trim();
+    if (now !== sha) throw new Error(`The branch changed after you approved it (approved ${sha.slice(0, 7)}, now ${now.slice(0, 7)}). Nothing was pushed; ask for a new push.`);
+    await git(dir, "push", "origin", `${sha}:refs/heads/${branch}`);
+    await git(dir, "branch", `--set-upstream-to=origin/${branch}`, branch).catch(() => "");
+  } else await git(dir, "push", "-u", "origin", branch);
   const remote = await git(dir, "remote", "get-url", "origin").catch(() => "");
   const r = remote.match(/github\.com[:/]([^/]+\/[^/.\s]+?)(?:\.git)?$/i);
   return { branch, url: r ? `https://github.com/${r[1]}/compare/${encodeURIComponent(branch)}?expand=1` : null };

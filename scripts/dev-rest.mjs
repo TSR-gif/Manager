@@ -2,6 +2,10 @@
 // with no Supabase account. Supports exactly what the app uses.
 //   node scripts/dev-rest.mjs                 -> built-in database (PGlite) stored in ./.localdb
 //   DATABASE_URL=postgres://... node ...      -> use a real Postgres instead
+//   node scripts/dev-rest.mjs --restore <backup.tar.gz>
+//                                             -> bring back a backup from .localdb-backups. Only into an empty spot:
+//                                                rename the current .localdb folder first (nothing is deleted).
+// A backup of the built-in database is saved once a day to .localdb-backups (the last 14 are kept).
 // Listens on :3001 (PORT_DB to change).
 import http from "node:http";
 import fs from "node:fs";
@@ -19,9 +23,34 @@ async function openDb() {
   }
   const { PGlite } = await import("@electric-sql/pglite");
   const dir = process.env.LOCALDB_DIR || path.join(ROOT, ".localdb"); // tests use a throwaway folder
-  const fresh = !fs.existsSync(dir);
-  const db = new PGlite(dir, { parsers: { 1082: (v) => v } });
+  const restoreAt = process.argv.indexOf("--restore");
+  let loadDataDir;
+  if (restoreAt !== -1) {
+    const file = process.argv[restoreAt + 1];
+    if (!file || !fs.existsSync(file)) { console.error("Give the backup file to restore: --restore .localdb-backups/<date>.tar.gz"); process.exit(1); }
+    if (fs.existsSync(dir)) { console.error(`${dir} already exists. Rename it (for example to .localdb-old) and run this again. Nothing was changed.`); process.exit(1); }
+    loadDataDir = new Blob([fs.readFileSync(file)]);
+    console.log(`Restoring ${file} into ${dir}`);
+  }
+  const fresh = !fs.existsSync(dir) && !loadDataDir;
+  const db = new PGlite(dir, { parsers: { 1082: (v) => v }, ...(loadDataDir ? { loadDataDir } : {}) });
   await db.waitReady;
+  // Daily backup (a compressed copy of the whole database), newest 14 kept.
+  const backupDir = process.env.LOCALDB_BACKUPS || path.join(ROOT, ".localdb-backups");
+  const backup = async () => {
+    try {
+      fs.mkdirSync(backupDir, { recursive: true });
+      const name = `${new Date().toISOString().slice(0, 10)}.tar.gz`;
+      const target = path.join(backupDir, name);
+      if (fs.existsSync(target)) return;
+      const blob = await db.dumpDataDir("gzip");
+      fs.writeFileSync(`${target}.part`, Buffer.from(await blob.arrayBuffer()));
+      fs.renameSync(`${target}.part`, target);
+      console.log("backed up the database to", target);
+      const old = fs.readdirSync(backupDir).filter((f) => /^\d{4}-\d{2}-\d{2}\.tar\.gz$/.test(f)).sort().slice(0, -14);
+      for (const f of old) fs.unlinkSync(path.join(backupDir, f));
+    } catch (e) { console.error("backup failed:", e.message); }
+  };
   pool = { query: (sql, vals) => db.query(sql, vals) };
   // apply any migrations not yet applied, then seed a brand-new database
   await db.exec("create table if not exists _local_migrations (name text primary key, applied_at timestamptz default now())");
@@ -39,7 +68,9 @@ async function openDb() {
       console.log("applied", f);
     }
   };
+  if (!fresh) await backup(); // before applying anything new
   await migrate();
+  setInterval(() => { void backup(); }, 6 * 3600_000).unref();
   // after a `git pull` the new database changes apply by themselves, no restart needed
   setInterval(() => { migrate().catch((e) => console.error("migration failed:", e.message)); }, 15_000).unref();
   if (fresh) {
@@ -118,7 +149,7 @@ const keyOk = (req) => {
   return d === 0;
 };
 // Database functions the app may call (supabase-js .rpc()). Listed here so nothing else can be called.
-const RPC = new Set(["mm_queue_paid_action", "mm_claim_action", "mm_budget_used"]);
+const RPC = new Set(["mm_queue_paid_action", "mm_claim_action", "mm_budget_used", "mm_create_invoice"]);
 
 const server = http.createServer(async (req, res) => {
   try {

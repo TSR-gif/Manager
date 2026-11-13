@@ -78,9 +78,9 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
   "code.push": {
     kind: "code.push", label: "Push code to GitHub", risk: "approval",
     execute: async (a) => {
-      const { dir, branch } = a.payload as { dir: string; branch: string };
+      const { dir, branch, sha } = a.payload as { dir: string; branch: string; sha?: string };
       const { pushBranch } = await import("@/lib/local-repos");
-      return pushBranch(dir, branch);
+      return pushBranch(dir, branch, sha);
     },
   },
   // Runbooks: Thomas approves the whole list of PC steps; risky steps (deleting, setup commands) ask again. Never trustable.

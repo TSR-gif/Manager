@@ -11,7 +11,7 @@ export async function middleware(req: NextRequest) {
   }
   // MyManager's own helpers send a header instead of the cookie (checked again in each route):
   // the phone bot and the 5-minute tick use the helper key; a Claude session only gets a pass for its own run's tools.
-  if (["/api/bot", "/api/proactive"].includes(pathname) && sameText(req.headers.get("x-manager-key"), await managerKey())) return NextResponse.next();
+  if (["/api/bot", "/api/proactive", "/api/agent"].includes(pathname) && sameText(req.headers.get("x-manager-key"), await managerKey())) return NextResponse.next();
   if (pathname === "/api/agent/tool") {
     if (await checkToolToken(req.headers.get("x-manager-tool"))) return NextResponse.next();
     return new NextResponse("Unauthorized", { status: 401 });

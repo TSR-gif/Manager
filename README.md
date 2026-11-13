@@ -12,9 +12,9 @@ See `docs/WORKLOG.md` for the full build log, decisions and what's pending.
 
 ## Run it on your PC (easiest)
 - **Windows:** double-click `Start-Manager.bat`. **Mac/Linux:** `npm install && npm run local`.
-- First run creates `.env.local` (login password `manager`, change it there) and a built-in database in `.localdb/` with your projects already loaded. Nothing else to set up.
+- First run creates `.env.local` (with a random login password, printed once in the window; change `APP_PASSWORD` there any time) and a built-in database in `.localdb/` with your projects already loaded. The database only answers MyManager itself (it checks a key) and is backed up daily to `.localdb-backups/` (see docs/SAFETY.md to restore). Nothing else to set up.
 - The assistant uses the **Claude Code app already signed in on this PC** (`AGENT_BACKEND=claude-code`). To use the Claude API instead, set `AGENT_BACKEND=api` and `ANTHROPIC_API_KEY=` in `.env.local`.
-- The assistant gets Manager's own tools over a local MCP bridge (`scripts/mcp-manager.mjs`) plus web search. It can't run shell commands or edit files.
+- The assistant gets Manager's own tools over a local MCP bridge (`scripts/mcp-manager.mjs`, with a pass that only works for that one run and can't approve anything) plus web search. It can read files anywhere in your user folder (never secrets) and run read-only commands; changes go through runbooks and coding missions you approve. What is and isn't enforced: docs/SAFETY.md.
 
 ### Optional extras (all in `.env.local`, restart after changing)
 - `TELEGRAM_BOT_TOKEN`: phone approvals with Approve/Deny buttons, plus texting the assistant. Make a bot with @BotFather, then pair it from the Approvals screen.

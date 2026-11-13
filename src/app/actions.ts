@@ -306,17 +306,8 @@ export async function createInvoice(form: FormData) {
   await requireAuth();
   const project_id = str(form, "project_id");
   if (!project_id) return;
-  const { data: p } = await db().from("projects").select("hourly_rate_cents").eq("id", project_id).single();
-  const { data: open } = await db().from("time_entries").select("id,minutes").eq("project_id", project_id).is("invoice_id", null);
-  const fixed = cents(str(form, "amount"));
-  const fromHours = Math.round(((open ?? []).reduce((s, e) => s + e.minutes, 0) / 60) * (p?.hourly_rate_cents ?? 0));
-  const amount = fixed || fromHours;
-  if (!amount) return;
-  const { count } = await db().from("invoices").select("id", { count: "exact", head: true });
-  const [inv] = unwrap(await db().from("invoices").insert({
-    project_id, amount_cents: amount, number: `INV-${String((count ?? 0) + 1).padStart(3, "0")}`, note: str(form, "note"),
-  }).select());
-  if (!fixed && open?.length) await db().from("time_entries").update({ invoice_id: inv.id }).in("id", open.map((e) => e.id));
+  // One locked database step numbers the invoice and claims the unbilled hours (no double billing on a double click).
+  unwrap(await db().rpc("mm_create_invoice", { p_project: project_id, p_fixed_cents: cents(str(form, "amount")) || 0, p_note: str(form, "note") }));
   refresh();
 }
 

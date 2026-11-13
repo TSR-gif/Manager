@@ -95,3 +95,44 @@ begin
     end if;
   end if;
 end $$;
+
+-- 4) Invoices: numbered from a sequence (never two with the same number) and the hours are claimed in the same
+--    step, so a double click or two requests at once can't bill the same hours twice.
+create sequence if not exists mm_invoice_seq;
+select setval('mm_invoice_seq', greatest(
+  coalesce((select max(nullif(regexp_replace(number, '\D', '', 'g'), '')::bigint) from invoices), 0),
+  (select count(*) from invoices)) + 1, false);
+
+create or replace function mm_create_invoice(p_project uuid, p_fixed_cents int, p_note text)
+returns setof invoices language plpgsql as $$
+declare
+  rate int;
+  mins bigint;
+  amount int;
+  inv invoices;
+begin
+  perform pg_advisory_xact_lock(7710002);
+  select coalesce(hourly_rate_cents, 0) into rate from projects where id = p_project;
+  if not found then return; end if;
+  select coalesce(sum(minutes), 0) into mins from time_entries where project_id = p_project and invoice_id is null;
+  amount := case when coalesce(p_fixed_cents, 0) > 0 then p_fixed_cents else round(mins / 60.0 * rate)::int end;
+  if amount <= 0 then return; end if;
+  insert into invoices (project_id, amount_cents, number, note)
+    values (p_project, amount, 'INV-' || lpad(nextval('mm_invoice_seq')::text, 3, '0'), p_note)
+    returning * into inv;
+  if coalesce(p_fixed_cents, 0) <= 0 then
+    update time_entries set invoice_id = inv.id where project_id = p_project and invoice_id is null;
+  end if;
+  return next inv;
+end $$;
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke execute on function mm_create_invoice(uuid, int, text) from public, anon, authenticated;
+    if exists (select 1 from pg_roles where rolname = 'service_role') then
+      grant execute on function mm_create_invoice(uuid, int, text) to service_role;
+      grant usage on sequence mm_invoice_seq to service_role;
+    end if;
+  end if;
+end $$;
