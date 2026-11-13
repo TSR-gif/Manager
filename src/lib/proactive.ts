@@ -35,7 +35,7 @@ const TIPS = [
 
 export function briefPrompt(dayNumber = 99) {
   const tip = dayNumber >= 1 && dayNumber <= TIPS.length ? `\nEnd with one line starting "Tip:" followed by: ${TIPS[dayNumber - 1]}` : "";
-  return `Give me my morning catch-up. Lead with the one thing to do first today and why, in one line. Then a plan of at most 5 things in order, and anything waiting for my OK. Mention money only if something needs attention. Don't lead with or count overdue tasks: fold anything from earlier days into the plan or ask "still want these?". Add any missing tasks. End with "OK with this plan? Reply OK and I'll set it up." Keep it short enough to read on a phone in 15 seconds.${tip}`;
+  return `Give me my morning catch-up. Lead with the one thing to do first today and why, in one line. Then a plan of at most 5 things in order, and anything waiting for my OK. If any projects are being supervised (supervised_missions in get_overview), add one line per project: what's running, what finished, and what needs me. Mention money only if something needs attention. Don't lead with or count overdue tasks: fold anything from earlier days into the plan or ask "still want these?". Add any missing tasks. End with "OK with this plan? Reply OK and I'll set it up." Keep it short enough to read on a phone in 15 seconds.${tip}`;
 }
 export const BRIEF_PROMPT = briefPrompt();
 
@@ -63,6 +63,7 @@ async function run(kind: "brief" | "checkin", goal: string) {
 export async function tick(force?: "brief" | "checkin") {
   // recurring per-project jobs run on their own schedule, alongside the catch-up and check-ins
   if (!force) void import("@/lib/jobs").then((m) => m.runDueJobs()).catch(() => {});
+  if (!force) void import("@/lib/missions").then((m) => m.runDueMissions()).catch(() => {});
   if (running) return { skipped: "busy" };
   const { data: s } = await db().from("settings").select("*").eq("id", 1).single();
   if (!s) return { skipped: "no settings" };

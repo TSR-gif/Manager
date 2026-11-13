@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarCheck, FolderKanban, Lightbulb, ShieldCheck, RefreshCcw, Plus, Sparkles, Wallet, UserRound, Settings, Menu, Megaphone } from "lucide-react";
+import { CalendarCheck, FolderKanban, Lightbulb, ShieldCheck, RefreshCcw, Plus, Sparkles, Wallet, UserRound, Settings, Menu, Megaphone, Radar } from "lucide-react";
 
 const items = [
   { href: "/", label: "Today", icon: CalendarCheck },
@@ -10,6 +10,7 @@ const items = [
   { href: "/projects", label: "Projects", icon: FolderKanban, desktopOnly: true },
   { href: "/money", label: "Money", icon: Wallet, desktopOnly: true },
   { href: "/approvals", label: "Approvals", icon: ShieldCheck },
+  { href: "/supervise", label: "Supervise", icon: Radar, desktopOnly: true },
   { href: "/marketing", label: "Marketing", icon: Megaphone, desktopOnly: true },
   { href: "/inbox", label: "Ideas", icon: Lightbulb, desktopOnly: true },
   { href: "/review", label: "Weekly review", icon: RefreshCcw, desktopOnly: true },
@@ -17,7 +18,7 @@ const items = [
   { href: "/settings", label: "Settings", icon: Settings, desktopOnly: true },
   { href: "/more", label: "More", icon: Menu, phoneOnly: true },
 ];
-const MORE = ["/more", "/projects", "/money", "/marketing", "/inbox", "/review", "/me", "/settings"];
+const MORE = ["/more", "/projects", "/money", "/marketing", "/supervise", "/inbox", "/review", "/me", "/settings"];
 
 export function Nav({ pending = 0 }: { pending?: number }) {
   const path = usePathname();

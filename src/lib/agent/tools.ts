@@ -163,6 +163,52 @@ export const AGENT_TOOLS: Tool[] = [
     strict: true,
   },
   {
+    name: "supervise_project",
+    description: "Start supervising work on a project until it's finished. Use when Thomas says something like \"Day trader is doing X, Y and Z, make sure it gets finished\". Breaks it into steps (tasks), then MyManager checks on it regularly on its own, ticks off steps that are really done, and asks Thomas when it needs him (in the app and on his phone). work_dir is the project's folder on his PC if he wants MyManager to do the coding steps itself (that needs his OK once, which this asks for); otherwise null.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_name: str, goal: str,
+        steps: { type: "array", items: str },
+        check_every_hours: { type: "number" },
+        work_dir: nstr,
+      },
+      required: ["project_name", "goal", "steps", "check_every_hours", "work_dir"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "add_mission_step",
+    description: "Add a step to a supervised mission (only when it's genuinely needed to finish).",
+    input_schema: { type: "object", properties: { mission_id: str, title: str }, required: ["mission_id", "title"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "mission_update",
+    description: "Record where a supervised mission is at, in one plain line Thomas can read. status: \"running\" to keep going, \"done\" only when every step is really finished.",
+    input_schema: { type: "object", properties: { mission_id: str, update: str, status: { type: "string", enum: ["running", "done"] } }, required: ["mission_id", "update", "status"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "ask_thomas",
+    description: "A supervised mission needs Thomas: a decision, a login, a key, money, or something only he knows. Sends him one short question in the app and on his phone, and pauses the mission until he answers. Ask only when you can't move without him.",
+    input_schema: { type: "object", properties: { mission_id: str, question: str }, required: ["mission_id", "question"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "run_coding_step",
+    description: "Start one coding step on a supervised mission: a Claude Code session in the project's folder on Thomas's PC, on its own branch, which never pushes. Only works if he approved coding for that mission. Give one clear, small step. It runs in the background and the mission is checked again when it finishes.",
+    input_schema: { type: "object", properties: { mission_id: str, instructions: str }, required: ["mission_id", "instructions"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "answer_mission",
+    description: "Pass Thomas's answer to a supervised mission that is waiting on him (when he answers in chat). Use the mission id from get_overview's missions list. The mission carries on straight away.",
+    input_schema: { type: "object", properties: { mission_id: str, answer: str }, required: ["mission_id", "answer"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "request_approval",
     description:
       "Queue an action that needs Thomas's approval before it happens: signing up for a service, paying for anything, sending an email, redeploying, deleting things, or using his PC. It does NOT run now: it lands in his Approvals screen. Always include the cost in dollars (0 if free) and a clear reason. Never ask for or include card numbers or passwords. To control his PC (desktop apps or websites, e.g. to fill a signup form), request kind pc.session with the exact purpose; once he approves, your next turn gets desktop and browser tools for 2 hours. For purchases, prepare everything up to the payment step; Thomas pays himself.",
@@ -211,6 +257,10 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           db().from("ideas").select("id,text").eq("status", "inbox").limit(50),
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
         ]);
+        const [missionsQ, doneQ] = await Promise.all([
+          db().from("missions").select("id,project_id,goal,status,question,last_update,worker,last_check_at").in("status", ["running", "waiting"]),
+          db().from("tasks").select("title,project_id,done_at").eq("status", "done").gte("done_at", new Date(Date.now() - 7 * 86_400_000).toISOString()).limit(200),
+        ]);
         const money = await getMoney();
         const { data: usage } = await db().from("usage_events").select("path,device,seconds").gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString()).limit(2000);
         const usageSummary: Record<string, { phone: number; desktop: number }> = {};
@@ -223,7 +273,9 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const t = (tasks.data ?? []).map((x: Pick<Task, "id" | "title" | "status" | "priority" | "due" | "project_id">) => ({ ...x, project: x.project_id ? names.get(x.project_id) : "everyday", project_id: undefined }));
         return {
           label: "Read your projects and tasks",
-          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary }),
+          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary,
+            supervised_missions: (missionsQ.data ?? []).map((m: { project_id: string | null }) => ({ ...m, project: m.project_id ? names.get(m.project_id) : null })),
+            done_last_7_days: (doneQ.data ?? []).map((d: { title: string; project_id: string | null }) => ({ title: d.title, project: d.project_id ? names.get(d.project_id) : "everyday" })) }),
         };
       }
       case "inspect_project": {
@@ -333,6 +385,63 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!c) return { label: "Couldn't find that ad", result: `No campaign matches "${input.campaign_name}".`, isError: true };
         await db().from("campaigns").update({ spend_cents: Math.round(Number(input.spend_dollars) * 100), installs: input.installs, clicks: input.clicks, impressions: input.impressions }).eq("id", c.id);
         return { label: `Updated results for ${c.name}`, result: "Saved." };
+      }
+      case "supervise_project": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
+        const hours = Math.max(0.25, Math.min(24, Number(input.check_every_hours) || 1));
+        const workDir = (input.work_dir as string | null) || (p as { local_path?: string | null }).local_path || null;
+        const [m] = unwrap(await db().from("missions").insert({
+          project_id: p.id, goal: input.goal, check_every_minutes: Math.round(hours * 60), work_dir: workDir,
+          next_check_at: new Date(Date.now() + 60_000).toISOString(),
+        }).select());
+        const steps = ((input.steps as string[]) ?? []).filter(Boolean).slice(0, 20);
+        if (steps.length) await db().from("tasks").insert(steps.map((t) => ({ title: t.slice(0, 200), project_id: p.id, mission_id: m.id, priority: 2 })));
+        const { logMission } = await import("@/lib/missions");
+        await logMission(m.id, "note", `Started: ${input.goal}`);
+        let coding = "";
+        if (workDir) {
+          if (input.work_dir && !(p as { local_path?: string | null }).local_path) await db().from("projects").update({ local_path: workDir }).eq("id", p.id);
+          const a = await queueAction({
+            kind: "mission.code", title: `Let MyManager work on the ${p.name} code`, requested_by: "agent", project_id: p.id, cost_cents: 0,
+            reason: `For "${String(input.goal).slice(0, 120)}": it edits files in ${workDir} on a separate branch, commits, and never pushes or deploys.`,
+            payload: { mission_id: m.id, folder: workDir },
+          });
+          coding = a.status === "pending" ? " Coding on his PC is waiting for his OK in Approvals." : "";
+        }
+        await did(`Started supervising ${p.name}: ${String(input.goal).slice(0, 60)}`, { op: "update", table: "missions", id: m.id, values: { status: "stopped" } });
+        return { label: `Supervising ${p.name}`, result: `Mission ${m.id} started with ${steps.length} steps. First check in about a minute, then every ${hours} hour(s). It shows on the Supervise screen.${coding}` };
+      }
+      case "add_mission_step": {
+        const { data: m } = await db().from("missions").select("project_id").eq("id", input.mission_id).maybeSingle();
+        if (!m) return { label: "No such mission", result: "Mission not found.", isError: true };
+        await db().from("tasks").insert({ title: String(input.title).slice(0, 200), project_id: m.project_id, mission_id: input.mission_id, priority: 2 });
+        return { label: `Added step: ${input.title}`, result: "Added." };
+      }
+      case "mission_update": {
+        const { data: m } = await db().from("missions").select("id").eq("id", input.mission_id).maybeSingle();
+        if (!m) return { label: "No such mission", result: "Mission not found.", isError: true };
+        await db().from("missions").update({ last_update: String(input.update).slice(0, 400) }).eq("id", input.mission_id);
+        if (input.status === "done") {
+          const { finishMission } = await import("@/lib/missions");
+          await finishMission(input.mission_id as string, "done");
+        }
+        return { label: input.status === "done" ? "Mission finished" : "Noted where it's at", result: "Saved." };
+      }
+      case "ask_thomas": {
+        const { askThomas } = await import("@/lib/missions");
+        const ok = await askThomas(input.mission_id as string, String(input.question));
+        return ok ? { label: "Asked you a question", result: "Sent to Thomas. The mission waits for his answer." } : { label: "No such mission", result: "Mission not found.", isError: true };
+      }
+      case "run_coding_step": {
+        const { startCodingStep } = await import("@/lib/missions");
+        const r = await startCodingStep(input.mission_id as string, String(input.instructions));
+        return { label: r.startsWith("Started") ? "Started a coding step" : "Couldn't start coding", result: r, isError: !r.startsWith("Started") };
+      }
+      case "answer_mission": {
+        const { answerMission } = await import("@/lib/missions");
+        const ok = await answerMission(input.mission_id as string, String(input.answer));
+        return ok ? { label: "Passed on your answer", result: "Done. The mission is carrying on." } : { label: "No such mission", result: "Mission not found.", isError: true };
       }
       case "request_approval": {
         const p = await findProject(input.project_name as string | null);

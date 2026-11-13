@@ -110,6 +110,13 @@ async function onMessage(m) {
   }
   if (m.voice) { await tg("sendMessage", { chat_id: from, text: "Voice notes aren't supported yet. Use your keyboard's mic button and send it as text." }); return; }
   if (!text) return;
+  // a reply to a "❓ … needs you" question goes straight back to that supervised mission
+  const tag = (m.reply_to_message?.text ?? "").match(/#m:([0-9a-f]{8})/i);
+  if (tag && text) {
+    const r = await mgr("answer", { id: tag[1], text });
+    await tg("sendMessage", { chat_id: from, text: r.ok ? "Thanks, passed on ✅ It's carrying on." : "That question is already closed. Ask me anything instead." });
+    return;
+  }
   if (text.startsWith("+")) {
     await mgr("capture", { text: text.slice(1).trim() });
     await tg("sendMessage", { chat_id: from, text: "Added ✅" });

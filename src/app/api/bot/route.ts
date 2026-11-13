@@ -33,6 +33,16 @@ export async function POST(req: Request) {
       await quickCapture(f);
       return Response.json({ ok: true });
     }
+    case "answer": {
+      // Thomas replied on his phone to a mission question ("#m:<8 chars>")
+      const short = String(body.id ?? "").toLowerCase();
+      const { data } = await db().from("missions").select("id").in("status", ["waiting", "running"]);
+      const m = ((data ?? []) as { id: string }[]).find((x) => x.id.replace(/-/g, "").startsWith(short));
+      if (!m || !body.text) return Response.json({ ok: false });
+      const { answerMission } = await import("@/lib/missions");
+      await answerMission(m.id, body.text);
+      return Response.json({ ok: true });
+    }
     case "pair": {
       await db().from("settings").update({ telegram_chat_id: body.chat_id ?? null }).eq("id", 1);
       return Response.json({ ok: true });

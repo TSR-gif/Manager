@@ -1,14 +1,19 @@
 import Link from "next/link";
-import { ChevronRight, FolderKanban, Lightbulb, Megaphone, RefreshCcw, Settings, UserRound, Wallet } from "lucide-react";
+import { ChevronRight, FolderKanban, Lightbulb, Megaphone, Radar, RefreshCcw, Settings, UserRound, Wallet } from "lucide-react";
 import { getIdeas } from "@/lib/queries";
+
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export default async function More() {
   const ideas = await getIdeas("inbox");
+  const { data: wq } = await db().from("missions").select("id").eq("status", "waiting");
+  const waiting = (wq ?? []).length;
   const rows = [
     { href: "/projects", icon: FolderKanban, title: "Projects", sub: "Every project, how it's going and what's next" },
     { href: "/money", icon: Wallet, title: "Money", sub: "What you're owed, hours, subscriptions" },
+    { href: "/supervise", icon: Radar, title: "Supervise", sub: "Work it's seeing through to the end, and questions for you", badge: waiting },
     { href: "/marketing", icon: Megaphone, title: "Marketing", sub: "Posts, replies and ads for your apps" },
     { href: "/inbox", icon: Lightbulb, title: "Ideas", sub: "Ideas you've jotted down, ready to sort", badge: ideas.length },
     { href: "/review", icon: RefreshCcw, title: "Weekly review", sub: "10 minutes to reset your priorities" },

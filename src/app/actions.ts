@@ -481,7 +481,7 @@ export async function disconnectGithub() {
 }
 
 // ---------- undo what the assistant did ----------
-const UNDO_TABLES = new Set(["tasks", "projects", "memories", "time_entries", "subscriptions", "ideas", "campaigns"]);
+const UNDO_TABLES = new Set(["tasks", "projects", "memories", "time_entries", "subscriptions", "ideas", "campaigns", "missions"]);
 export async function undoActivity(form: FormData) {
   const id = str(form, "id");
   if (!id) return;
@@ -608,5 +608,62 @@ export async function logCampaignResults(form: FormData) {
   if (!id) return;
   const n = (k: string) => Math.max(0, Math.round(Number(str(form, k) ?? 0)) || 0);
   await db().from("campaigns").update({ spend_cents: centsOf(str(form, "spend")), installs: n("installs"), clicks: n("clicks"), impressions: n("impressions") }).eq("id", id);
+  refresh();
+}
+
+// ---------- supervise ----------
+/** Start supervising from the Supervise screen: goal + steps (one per line). */
+export async function startMission(form: FormData) {
+  const projectId = str(form, "project_id");
+  const goal = str(form, "goal");
+  if (!projectId || !goal) return;
+  const hours = Math.max(0.25, Math.min(24, Number(str(form, "every") ?? 1) || 1));
+  const workDir = str(form, "work_dir");
+  const [m] = unwrap(await db().from("missions").insert({
+    project_id: projectId, goal: goal.slice(0, 1000), check_every_minutes: Math.round(hours * 60), work_dir: workDir,
+    next_check_at: new Date(Date.now() + 30_000).toISOString(),
+  }).select());
+  const steps = (str(form, "steps") ?? "").split(/\r?\n/).map((x) => x.replace(/^[-*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 20);
+  if (steps.length) await db().from("tasks").insert(steps.map((t) => ({ title: t.slice(0, 200), project_id: projectId, mission_id: m.id, priority: 2 })));
+  const { logMission } = await import("@/lib/missions");
+  await logMission(m.id, "note", `Started: ${goal}`);
+  if (workDir) {
+    await db().from("projects").update({ local_path: workDir }).eq("id", projectId);
+    const { data: p } = await db().from("projects").select("name").eq("id", projectId).single();
+    await queueAction({
+      kind: "mission.code", title: `Let MyManager work on the ${p?.name ?? "project"} code`, requested_by: "user", project_id: projectId, cost_cents: 0,
+      reason: `For "${goal.slice(0, 120)}": it edits files in ${workDir} on a separate branch, commits, and never pushes or deploys.`,
+      payload: { mission_id: m.id, folder: workDir },
+    });
+  }
+  refresh();
+  redirect(`/supervise?m=${m.id}`);
+}
+
+export async function answerMissionForm(form: FormData) {
+  const id = str(form, "id");
+  const answer = str(form, "answer");
+  if (!id || !answer) return;
+  const { answerMission } = await import("@/lib/missions");
+  await answerMission(id, answer);
+  refresh();
+}
+
+export async function checkMissionNow(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  await db().from("missions").update({ next_check_at: new Date().toISOString() }).eq("id", id);
+  const { checkMission } = await import("@/lib/missions");
+  void checkMission(id).catch(() => {});
+  refresh();
+}
+
+export async function setMissionStatus(form: FormData) {
+  const id = str(form, "id");
+  const status = str(form, "status");
+  if (!id || !status) return;
+  const { finishMission } = await import("@/lib/missions");
+  if (status === "done" || status === "stopped") await finishMission(id, status);
+  else if (status === "running") await db().from("missions").update({ status: "running", question: null, finished_at: null, next_check_at: new Date().toISOString() }).eq("id", id);
   refresh();
 }

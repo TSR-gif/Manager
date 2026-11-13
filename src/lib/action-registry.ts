@@ -63,6 +63,17 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
   // Drafts from recurring jobs. Approving marks it ready: Thomas (or his scheduler) posts it, and he sends replies himself.
   "social.post": { kind: "social.post", label: "Social media post", risk: "approval" },
   "social.reply": { kind: "social.reply", label: "Reply to a comment", risk: "approval" },
+  // Supervise: letting MyManager edit a project's code on this PC, once per mission. Never trustable.
+  "mission.code": {
+    kind: "mission.code", label: "Work on your code", risk: "approval",
+    execute: async (a) => {
+      const { db } = await import("@/lib/db");
+      const id = (a.payload as { mission_id?: string }).mission_id;
+      if (!id) throw new Error("No mission");
+      await db().from("missions").update({ can_code: true, next_check_at: new Date().toISOString() }).eq("id", id);
+      return { note: "Coding allowed for this mission" };
+    },
+  },
   // Ads are money: launching or raising a budget always asks and counts against the spend limits.
   "ads.launch": { kind: "ads.launch", label: "Launch an ad", risk: "approval" },
   "ads.budget": { kind: "ads.budget", label: "Change an ad budget", risk: "approval" },
@@ -71,7 +82,7 @@ export const ACTION_KINDS: Record<string, ActionKind> = {
 };
 
 /** Hard rule: these always ask, whatever the trust ladder or autonomy setting says. */
-export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget"];
+export const ALWAYS_ASK = ["signup", "purchase", "email.send", "pc.session", "social.post", "social.reply", "ads.launch", "ads.budget", "mission.code"];
 
 export function kindOf(kind: string): ActionKind {
   return ACTION_KINDS[kind] ?? ACTION_KINDS.other;

@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { CheckCircle2, ChevronRight, Coffee, Flame, Lightbulb, ListTodo, RefreshCcw, ShieldCheck, Sparkles, Timer, Wallet, X, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, Coffee, Flame, Lightbulb, ListTodo, RefreshCcw, ShieldCheck, Sparkles, Timer, Wallet, X, Zap, CircleHelp } from "lucide-react";
 import { cookies } from "next/headers";
-import { addTask, decideAction, dismissWelcome, endFocus, setTaskStatus, startFocus, undoActivity } from "./actions";
+import { addTask, answerMissionForm, decideAction, dismissWelcome, endFocus, setTaskStatus, startFocus, undoActivity } from "./actions";
 import { nextTasks, rankProjects } from "@/lib/focus";
 import { getActions, getActiveFocus, getIdeas, getProjects, getSettings, getTasks, todayStats } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
@@ -45,7 +45,11 @@ export default async function Today() {
   const [projects, tasks, focus, pending, inbox, settings, stats] = await Promise.all([
     getProjects(), getTasks(), getActiveFocus(), getActions(["pending"]), getIdeas("inbox"), getSettings(), todayStats(),
   ]);
-  const [signals, money] = await Promise.all([getSignals(projects.filter((p) => p.status === "active")), getMoney()]);
+  const [signals, money, waitingQ] = await Promise.all([
+    getSignals(projects.filter((p) => p.status === "active")), getMoney(),
+    db().from("missions").select("id,project_id,question").eq("status", "waiting"),
+  ]);
+  const waitingMissions = (waitingQ.data ?? []) as { id: string; project_id: string | null; question: string | null }[];
   const ranked = rankProjects(projects, tasks, signals);
   const top = ranked[0];
   const focusProject = focus?.project_id ? projects.find((p) => p.id === focus.project_id) : null;
@@ -84,6 +88,22 @@ export default async function Today() {
       </header>
 
       {/* Waiting for your OK: pinned first, decided right here */}
+      {waitingMissions.length > 0 && (
+        <section className="space-y-2">
+          {waitingMissions.slice(0, 3).map((m) => (
+            <div key={m.id} className="card !border-[rgba(255,200,87,.4)] !p-4">
+              <div className="flex items-center gap-2 text-[12px] text-warn"><CircleHelp size={14} /> {projects.find((p) => p.id === m.project_id)?.name ?? "A job"} needs you</div>
+              <div className="mt-1.5 text-[15px] font-medium">{m.question}</div>
+              <form action={answerMissionForm} className="mt-3 flex gap-2">
+                <input type="hidden" name="id" value={m.id} />
+                <input name="answer" placeholder="Your answer" required autoComplete="off" />
+                <button className="btn btn-primary shrink-0 !min-h-11">Send</button>
+              </form>
+            </div>
+          ))}
+        </section>
+      )}
+
       {pending.length > 0 && (
         <section className="space-y-2">
           {pending.slice(0, 3).map((a) => (

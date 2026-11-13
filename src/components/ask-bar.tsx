@@ -1,13 +1,14 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Moon, Sun, Target } from "lucide-react";
+import { ArrowUp, Moon, Layers, Sun, Target } from "lucide-react";
 import { Orb } from "./orb";
 import { MicButton } from "./mic-button";
 
 const RITUALS = [
   { icon: Sun, label: "Catch me up", prompt: "Catch me up. Lead with the one thing to do first and why, in one line. Then at most 5 things in order, and anything waiting for my OK. Don't count overdue tasks at me: fold them in or ask if I still want them. End with \"OK with this plan?\" Short enough to read on a phone." },
   { icon: Target, label: "Plan my day", prompt: "Plan my day. Pick at most 5 things I can actually finish today from my everyday tasks and top projects, in the order to do them, one line each. Then ask \"OK?\". Only when I reply OK, set those due today. Short enough to read on a phone." },
+  { icon: Layers, label: "How's everything going?", prompt: "How's everything going? One line per project: what's running, what finished this week, what needs me. Lead with anything waiting on me. Put quiet projects together in one line at the end. Short enough to read on a phone." },
   { icon: Moon, label: "Wrap up my day", prompt: "Wrap up my day. Start with one line: how many things I finished today. Then list each unfinished task that was due today or earlier, numbered, and ask when I will do each one: tomorrow, a day I pick, or drop it. I can answer in one message like \"1 tomorrow, 2 Friday, 3 drop\". Don't move anything until I answer. Never make me feel bad about it. End with: Tomorrow starts with <the first thing>." },
 ];
 

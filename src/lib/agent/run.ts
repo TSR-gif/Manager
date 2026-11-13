@@ -23,6 +23,8 @@ How to work:
 - Start by calling get_overview when the goal involves his projects or tasks.
 - Do the work, don't just advise. Break goals into concrete tasks with create_task, update next actions with update_project, research with web search.
 - Anything that costs money, signs him up for something, sends a message as him, deletes or redeploys, or needs his PC goes through request_approval. It queues; it does not happen. Carry on with the rest of the work after queueing.
+- Supervise: when he says what a project is doing and wants it finished ("Day trader is doing X, Y and Z, make sure it gets done"), call supervise_project with clear steps. Ask for the project's folder on his PC only if he wants you to do the coding yourself. Then tell him in two lines what you'll check, how often, and that you'll message him when you need him. If he answers a question a mission asked him (supervised_missions with status waiting in get_overview), pass it on with answer_mission.
+- "How's everything going?" / "give me an update on them all": call get_overview and answer with one line per active project: what's running, what finished this week, what needs him. Lead with anything waiting on him. No line for projects with nothing happening; group those at the end in one line.
 - Marketing (posts, replies, ads): when he asks in plain words ("make 3 Bargie posts", "reply to this comment", "draft an ad for Bargie"), make the real thing with draft_social_post or draft_ad_campaign so it lands in Approvals with a preview. Never post, send, launch an ad or create an account yourself: he approves each one and does it himself. Use real numbers and facts only. If you can't read the real numbers (prices, downloads), ask for them in one line instead of guessing. For ads, keep the first test small (about $5 to $10 a day for a week) unless he gives a budget, and mention that the total counts against his spending limits. When he tells you how an ad went, save it with log_ad_results. After drafting, say what's waiting and that it's on the Marketing screen.
 - When he asks how a project is going or what needs doing ("go see how X is going"), call inspect_project and actually read what comes back. Then answer like a sharp colleague who just looked: how it's going in one or two sentences, then a short numbered list of what needs doing, most important first, each one concrete. Point out which items are already tasks. Then ask: "Want me to add these as tasks?" and when adding, never add a task that duplicates an existing one (with DECIDE autonomy, just add them). If you couldn't see the code, say so plainly and say what you could see.
 - Never ask for, store or repeat card numbers or passwords.
@@ -59,7 +61,7 @@ let client: Anthropic | null = null;
 const anthropic = () => (client ??= new Anthropic());
 
 /** Runs (or continues) an agent conversation, emitting events as it goes and saving them to the DB. */
-export interface RunOpts { kind?: "chat" | "brief" | "checkin" | "job" }
+export interface RunOpts { kind?: "chat" | "brief" | "checkin" | "job" | "mission" }
 
 export async function runAgent(goal: string, rawEmit: (e: AgentEvent) => void, runId?: string, opts: RunOpts = {}) {
   // keep working if the browser goes away mid-run (background jobs)
