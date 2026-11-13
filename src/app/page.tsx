@@ -1,103 +1,147 @@
-import Image from "next/image";
+import Link from "next/link";
+import { addTask, endFocus, quickCapture, setTaskStatus, startFocus } from "./actions";
+import { nextTasks, rankProjects } from "@/lib/focus";
+import { getActions, getActiveFocus, getIdeas, getProjects, getSettings, getTasks } from "@/lib/queries";
+import { getSignals } from "@/lib/signals";
+import { SignalChips } from "@/components/ui";
+import { FocusTimer } from "@/components/focus-timer";
+import type { Task } from "@/lib/types";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+function TaskRow({ t, projectName }: { t: Task; projectName?: string }) {
+  const overdue = t.due && new Date(t.due).getTime() < Date.now();
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <li className="flex items-center gap-3 py-2">
+      <form action={setTaskStatus.bind(null, t.id, "done")}>
+        <button aria-label="Mark done" className="h-5 w-5 rounded-full border border-muted hover:border-accent" />
+      </form>
+      <div className="min-w-0 flex-1">
+        <div className="truncate">{t.title}</div>
+        <div className="flex gap-2 text-xs text-muted">
+          {projectName && <span>{projectName}</span>}
+          {t.status === "doing" && <span className="text-accent">in progress</span>}
+          {t.due && <span style={overdue ? { color: "#f87171" } : undefined}>due {t.due}</span>}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
+      {t.status === "todo" && (
+        <form action={setTaskStatus.bind(null, t.id, "doing")}>
+          <button className="text-xs text-muted hover:text-text">start</button>
+        </form>
+      )}
+    </li>
+  );
+}
+
+export default async function Today() {
+  const [projects, tasks, focus, pending, inbox, settings] = await Promise.all([
+    getProjects(), getTasks(), getActiveFocus(), getActions(["pending"]), getIdeas("inbox"), getSettings(),
+  ]);
+  const signals = await getSignals(projects.filter((p) => p.status === "active"));
+  const ranked = rankProjects(projects, tasks, signals);
+  const top = ranked[0];
+  const focusProject = focus?.project_id ? projects.find((p) => p.id === focus.project_id) : null;
+  const target = focusProject ?? top?.project;
+  const targetTasks = target ? nextTasks(target.id, tasks) : [];
+  const everyday = tasks.filter((t) => !t.project_id).slice(0, 12);
+  const reviewDue = !settings.last_review_at || Date.now() - new Date(settings.last_review_at).getTime() > 7 * 86_400_000;
+  const greeting = (() => {
+    const h = Number(new Intl.DateTimeFormat("en-AU", { hour: "numeric", hour12: false, timeZone: "Australia/Melbourne" }).format(new Date()));
+    return h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening";
+  })();
+
+  return (
+    <div className="space-y-5">
+      <header className="flex items-end justify-between">
+        <div>
+          <div className="label">{new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "short", timeZone: "Australia/Melbourne" })}</div>
+          <h1 className="text-2xl font-bold">{greeting}, Thomas</h1>
+        </div>
+        <div className="flex gap-2">
+          {pending.length > 0 && <Link href="/approvals" className="btn btn-primary">{pending.length} to approve</Link>}
+        </div>
+      </header>
+
+      <form action={quickCapture} className="flex gap-2">
+        <input name="text" placeholder='Capture anything… "idea: …", "#rewards fix login", "call bank"' autoComplete="off" />
+        <button className="btn">Add</button>
+      </form>
+
+      {/* THE ONE THING */}
+      <section className="card border-accent/50" style={{ borderColor: "color-mix(in srgb, var(--accent) 45%, transparent)" }}>
+        {target ? (
+          <>
+            <div className="label">{focus ? "You're focused on" : "Work on this now"}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <Link href={`/projects/${target.id}`} className="text-2xl font-bold hover:underline">{target.name}</Link>
+              <SignalChips s={signals[target.id]} />
+            </div>
+            {!focus && top && <div className="mt-1 text-sm text-muted">Why: {top.reasons.join(" · ")}</div>}
+            {target.next_action && <div className="mt-3"><span className="text-muted">Next action: </span>{target.next_action}</div>}
+
+            <ul className="mt-3 divide-y divide-line">
+              {targetTasks.map((t) => <TaskRow key={t.id} t={t} />)}
+            </ul>
+            <form action={addTask} className="mt-2 flex gap-2">
+              <input type="hidden" name="project_id" value={target.id} />
+              <input name="title" placeholder={`Add a task to ${target.name}`} autoComplete="off" />
+              <button className="btn">+</button>
+            </form>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {focus ? (
+                <>
+                  <FocusTimer startedAt={focus.started_at} minutes={focus.planned_minutes} />
+                  <form action={endFocus}><input type="hidden" name="outcome" value="done" /><button className="btn btn-good">Finish block</button></form>
+                  <form action={endFocus}><input type="hidden" name="outcome" value="abandoned" /><button className="btn">Stop</button></form>
+                </>
+              ) : (
+                <form action={startFocus} className="flex gap-2">
+                  <input type="hidden" name="project_id" value={target.id} />
+                  <input type="hidden" name="task_id" value={targetTasks[0]?.id ?? ""} />
+                  <input type="hidden" name="minutes" value={settings.focus_minutes} />
+                  <button className="btn btn-primary">Start {settings.focus_minutes}-min focus block</button>
+                </form>
+              )}
+            </div>
+          </>
+        ) : (
+          <div>No active projects. <Link className="text-accent" href="/projects">Pick one to activate.</Link></div>
+        )}
+      </section>
+
+      <div className="grid gap-5 md:grid-cols-2">
+        <section className="card">
+          <div className="label mb-1">Everyday</div>
+          {everyday.length === 0 && <div className="py-2 text-sm text-muted">Nothing on your plate. Add errands with the capture bar.</div>}
+          <ul className="divide-y divide-line">{everyday.map((t) => <TaskRow key={t.id} t={t} />)}</ul>
+        </section>
+
+        <section className="card">
+          <div className="label mb-2">Up next</div>
+          <ul className="space-y-2">
+            {ranked.slice(focus ? 0 : 1, 6).filter((r) => r.project.id !== target?.id).map((r) => (
+              <li key={r.project.id} className="flex items-center justify-between gap-2">
+                <Link href={`/projects/${r.project.id}`} className="truncate hover:underline">{r.project.name}</Link>
+                <span className="shrink-0 text-xs text-muted">{r.reasons.slice(0, 2).join(" · ")}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+
+      {(inbox.length > 0 || reviewDue) && (
+        <section className="card flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm">
+            {inbox.length > 0 && <span>{inbox.length} idea{inbox.length > 1 ? "s" : ""} waiting for triage. </span>}
+            {reviewDue && <span>Your weekly review is due.</span>}
+          </div>
+          <div className="flex gap-2">
+            {inbox.length > 0 && <Link href="/inbox" className="btn">Triage ideas</Link>}
+            {reviewDue && <Link href="/review" className="btn">Do review</Link>}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

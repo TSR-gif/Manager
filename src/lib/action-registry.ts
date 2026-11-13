@@ -1,0 +1,66 @@
+import "server-only";
+import type { Action } from "./types";
+
+/**
+ * Every capability the Manager (or its Claude agent) can use is declared here.
+ * risk:
+ *   auto     - runs immediately, still written to the audit log
+ *   approval - waits in the approval queue until Thomas taps Approve
+ * Anything with a cost, a signup, a delete or an outbound message is "approval".
+ */
+export interface ActionKind {
+  kind: string;
+  label: string;
+  risk: "auto" | "approval";
+  execute?: (a: Action) => Promise<Record<string, unknown>>;
+}
+
+async function ghCreateIssue(a: Action) {
+  const { repo, title, body } = a.payload as { repo: string; title: string; body?: string };
+  const res = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      Accept: "application/vnd.github+json",
+    },
+    body: JSON.stringify({ title, body }),
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.message ?? `GitHub ${res.status}`);
+  return { url: j.html_url, number: j.number };
+}
+
+async function vercelRedeploy(a: Action) {
+  const { project } = a.payload as { project: string };
+  const team = process.env.VERCEL_TEAM_ID ? `teamId=${process.env.VERCEL_TEAM_ID}` : "";
+  const headers = { Authorization: `Bearer ${process.env.VERCEL_TOKEN}`, "Content-Type": "application/json" };
+  const list = await fetch(
+    `https://api.vercel.com/v6/deployments?app=${encodeURIComponent(project)}&target=production&limit=1&${team}`,
+    { headers },
+  ).then((r) => r.json());
+  const last = list.deployments?.[0];
+  if (!last) throw new Error("No previous production deployment to redeploy");
+  const res = await fetch(`https://api.vercel.com/v13/deployments?forceNew=1&${team}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: project, deploymentId: last.uid, target: "production" }),
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.error?.message ?? `Vercel ${res.status}`);
+  return { url: `https://${j.url}`, id: j.id };
+}
+
+export const ACTION_KINDS: Record<string, ActionKind> = {
+  "github.create_issue": { kind: "github.create_issue", label: "Create GitHub issue", risk: "auto", execute: ghCreateIssue },
+  "vercel.redeploy": { kind: "vercel.redeploy", label: "Redeploy on Vercel", risk: "approval", execute: vercelRedeploy },
+  // Carried out by a person, the Claude agent, or the PC helper once approved.
+  "signup": { kind: "signup", label: "Sign up for a service", risk: "approval" },
+  "purchase": { kind: "purchase", label: "Pay for something", risk: "approval" },
+  "email.send": { kind: "email.send", label: "Send an email", risk: "approval" },
+  "pc.session": { kind: "pc.session", label: "Use your PC", risk: "approval" },
+  "other": { kind: "other", label: "Other", risk: "approval" },
+};
+
+export function kindOf(kind: string): ActionKind {
+  return ACTION_KINDS[kind] ?? ACTION_KINDS.other;
+}
