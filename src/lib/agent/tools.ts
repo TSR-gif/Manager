@@ -34,13 +34,14 @@ export const AGENT_TOOLS: Tool[] = [
   {
     name: "draft_runbook",
     description: `Plan a list of steps MyManager will carry out on Thomas's PC and watch, e.g. "start the Saturday job, close the queue, commit and push, delete the old venv", or setting up a service (sign-ins handed to him). It goes to Approvals as one list; nothing runs until he approves. Deleting folders and any command that isn't read-only ask him again at that step. Step kinds:
-- start_job: file (a .bat/.cmd/.py/.ps1 in the project folder), expect_hours. Runs it in the background, keeps the PC awake, watches its output, tells him when it finishes or stalls.
+- start_job: file (a .bat/.cmd/.py/.ps1 in the project folder), expect_hours. Runs it in the background, keeps the PC awake, watches its output, tells him when it finishes or stalls. The steps after it wait until it finishes successfully; set independent: true only if they really don't need its result.
 - stop_process: match (e.g. "run_queue"): closes that program if it's running from the project.
 - git_commit_push: message. Commits everything new in the project folder (skips .env/key files and venv folders, stops if it sees secrets) and pushes the current branch.
 - delete_folder: path (inside the project folder).
 - open_link: url (https) opens it in his browser.
-- handoff: text (what he needs to do), optional url or command (a sign-in command like "vercel login" opened in a window for him), blocking (false = "only if needed"). Use this for anything that needs a password, 2FA, payment or a choice only he can make.
+- handoff: text (what he needs to do), optional url or command (only a sign-in: gh auth login, vercel login, supabase login or npm login, opened in a window for him), blocking (false = "only if needed"). Use this for anything that needs a password, 2FA, payment or a choice only he can make.
 - run_command: command (git, gh, npm, npx, node, py, pip, vercel, supabase, claude or winget only).
+Steps run in order; if one fails, the ones after it are held until Thomas says retry, skip or stop.
 Set optional: true for steps he called optional. Never put passwords or keys in steps.`,
     input_schema: {
       type: "object",
@@ -49,7 +50,7 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
         steps: { type: "array", items: { type: "object", properties: {
           kind: { type: "string", enum: ["start_job", "stop_process", "git_commit_push", "delete_folder", "open_link", "handoff", "run_command"] },
           label: str, file: str, expect_hours: { type: "number" }, match: str, message: str, path: str, url: str, text: str, command: str,
-          blocking: { type: "boolean" }, optional: { type: "boolean" },
+          blocking: { type: "boolean" }, optional: { type: "boolean" }, independent: { type: "boolean" },
         }, required: ["kind", "label"] } },
       },
       required: ["project_name", "title", "steps"],
@@ -547,7 +548,8 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
       case "save_project_brief": {
         const p = await findProject(input.project_name as string);
         if (!p) return noProject(input.project_name);
-        await db().from("projects").update({ brief: String(input.brief).slice(0, 12000), brief_updated_at: new Date().toISOString(), brief_edited_by_you: false }).eq("id", p.id);
+        const { error } = await db().from("projects").update({ brief: String(input.brief).slice(0, 12000), brief_updated_at: new Date().toISOString(), brief_edited_by_you: false }).eq("id", p.id);
+        if (error) return { label: "Couldn't save the brief", result: `Not saved: ${error.message}`, isError: true };
         const { writeNotes } = await import("@/lib/project-notes");
         await writeNotes(p.id).catch(() => "");
         return { label: `Updated the ${p.name} brief`, result: "Saved. It shows on the project page." };
@@ -628,7 +630,10 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!m) return { label: "No such mission", result: "Mission not found.", isError: true };
         await db().from("missions").update({ last_update: String(input.update).slice(0, 400) }).eq("id", input.mission_id);
         if (input.status === "done" && !m.ongoing) {
-          const { finishMission } = await import("@/lib/missions");
+          // The server decides whether it's really finished, not the model's say-so.
+          const { finishMission, whyNotFinished } = await import("@/lib/missions");
+          const why = await whyNotFinished(input.mission_id as string);
+          if (why) return { label: "Not finished yet", result: `Saved the update, but the mission stays open: ${why}`, isError: true };
           await finishMission(input.mission_id as string, "done");
         }
         return { label: input.status === "done" && !m.ongoing ? "Mission finished" : "Noted where it's at", result: m.ongoing && input.status === "done" ? "Saved. Helpers keep going until Thomas stops them." : "Saved." };
@@ -651,10 +656,15 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const branch = `mymanager/${shortId(m.id)}`;
         const sum = await branchSummary(m.work_dir, branch);
         if (!sum.log) return { label: "Nothing to push", result: `The branch ${branch} has no new commits.`, isError: true };
+        // The approval is for this exact commit: if the branch moves before Thomas says yes, nothing is pushed.
+        const { execFile } = await import("node:child_process");
+        const sha = await new Promise<string>((res) => execFile("git", ["-C", m.work_dir, "rev-parse", `refs/heads/${branch}`], { windowsHide: true }, (e, out) => res(e ? "" : out.trim())));
+        if (!/^[0-9a-f]{40}$/.test(sha)) return { label: "Nothing to push", result: `Couldn't read the latest commit on ${branch}.`, isError: true };
         const a = await queueAction({
-          kind: "code.push", title: `Push ${branch} to GitHub`, requested_by: "agent", project_id: m.project_id, cost_cents: 0,
+          kind: "code.push", requested_by: "agent", project_id: m.project_id, cost_cents: 0,
           reason: `${m.goal}. ${sum.stat || ""}`.trim(),
-          payload: { mission_id: m.id, dir: m.work_dir, branch, changes: sum.log.slice(0, 1500) },
+          title: `Push ${branch} (commit ${sha.slice(0, 7)}) to GitHub`,
+          payload: { mission_id: m.id, dir: m.work_dir, branch, sha, changes: sum.log.slice(0, 1500) },
         });
         return { label: "Asked you to push the work", result: `Waiting in Approvals (${a.status}). Once pushed, Thomas reviews and merges it on GitHub himself.` };
       }

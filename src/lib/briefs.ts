@@ -37,12 +37,19 @@ export async function latestCommit(p: BriefProject): Promise<string | null> {
 const MAX = 40_000;
 /** Read one file of a project (read-only): from the PC folder if there is one, otherwise from GitHub. */
 export async function readProjectFile(p: BriefProject, rel: string): Promise<string> {
-  const clean = rel.replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!clean || clean.split("/").includes("..")) return "That path isn't allowed.";
+  // "" or "." lists the project's top folder
+  const clean = String(rel ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\/?$/, "");
+  if (clean.split("/").includes("..") || path.isAbsolute(clean) || /^[a-z]:/i.test(clean)) return "That path isn't allowed.";
   if (/(^|\/)\.env(\.|$)|secret|credential|\.pem$|\.key$/i.test(clean)) return "Secret files are never read.";
   if (p.local_path) {
-    const full = path.resolve(p.local_path, clean);
-    if (!full.startsWith(path.resolve(p.local_path))) return "That path isn't allowed.";
+    const full = path.resolve(p.local_path, clean || ".");
+    // compare real locations, so a link or junction inside the project can't lead outside it
+    let real = full;
+    try { real = fs.realpathSync.native(full); } catch { /* missing: GitHub below */ }
+    let root = path.resolve(p.local_path);
+    try { root = fs.realpathSync.native(root); } catch { /* keep */ }
+    const relPath = path.relative(root, real);
+    if (relPath.startsWith("..") || path.isAbsolute(relPath)) return "That path isn't allowed.";
     try {
       const st = fs.statSync(full);
       if (st.isDirectory()) return fs.readdirSync(full).filter((n) => !n.startsWith(".") && n !== "node_modules").slice(0, 200).join("\n");
@@ -51,7 +58,7 @@ export async function readProjectFile(p: BriefProject, rel: string): Promise<str
     } catch { /* not on the PC: try GitHub */ }
   }
   if (p.github_repo) {
-    const f = await gh<{ content?: string; type?: string } | { name: string; type: string }[]>(`repos/${p.github_repo}/contents/${clean.split("/").map(encodeURIComponent).join("/")}`);
+    const f = await gh<{ content?: string; type?: string } | { name: string; type: string }[]>(`repos/${p.github_repo}/contents/${clean ? clean.split("/").map(encodeURIComponent).join("/") : ""}`);
     if (Array.isArray(f)) return f.map((x) => `${x.name}${x.type === "dir" ? "/" : ""}`).join("\n");
     if (f?.content) {
       const text = Buffer.from(f.content, "base64").toString("utf8");
@@ -96,8 +103,12 @@ export async function studyProject(id: string) {
   const p = data as BriefProject | null;
   if (!p || !hasCode(p)) return null;
   const sha = await latestCommit(p);
+  const started = Date.now();
   const runId = await runAgent(studyGoal(p), () => {}, undefined, { kind: "study" });
-  if (sha) await db().from("projects").update({ brief_commit: sha }).eq("id", id);
+  // Only mark the brief as up to date with this commit if a new brief really got saved during the run.
+  const { data: after } = await db().from("projects").select("brief_updated_at").eq("id", id).maybeSingle();
+  const saved = after?.brief_updated_at && new Date(after.brief_updated_at as string).getTime() >= started;
+  if (sha && saved) await db().from("projects").update({ brief_commit: sha }).eq("id", id);
   return runId;
 }
 

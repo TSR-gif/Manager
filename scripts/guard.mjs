@@ -39,6 +39,14 @@ const DESTRUCTIVE = [
   [/shutil\.rmtree|os\.remove|os\.unlink|\.unlink\(|rmsync|rmdirsync|unlinksync|fs\.rm\(|remove-item/, "deleting files from a script"],
   [/\bgit\s+(diff|log|show|format-patch)\b.*--output\b/, "overwriting a file with git --output"],
   [/(^|[^>2&=\-])>(?!>)\s*(?!(nul|\/dev\/null|&))[\w.\\/"'$%~]/, "overwriting a file with >"],
+  // Inline code can do anything the file tools can, without going through them (the review's "interpreter writes").
+  [/\b(node|nodejs|deno|bun)(\.exe)?\b.*\s(-e|--eval|-p|--print)(\s|=|$)/, "running inline code (put it in a file in the work folder instead)"],
+  [/\b(py|python3?)(\.exe)?\b.*\s-c(\s|$)/, "running inline code (put it in a file in the work folder instead)"],
+  [/\b(powershell|pwsh)(\.exe)?\b.*\s-(c|command|e|enc|encodedcommand)\b/, "running inline PowerShell"],
+  // MyManager's own settings and services are off-limits to the sessions it starts.
+  [/process\.env|os\.environ|\$env:|\bprintenv\b|get-childitem\s+env:|^\s*(env|set)\s*$/, "reading environment variables"],
+  [/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):(3000|3001)\b|\/api\/(bot|proactive|agent)\b/, "talking to MyManager's own app or database directly"],
+  [/mymanager[\\/](\.env|\.localdb)|\.env\.local\b/, "reading MyManager's own settings"],
 ];
 
 function tracked(file) {
@@ -49,7 +57,19 @@ function tracked(file) {
 }
 const created = () => { try { return new Set(JSON.parse(fs.readFileSync(STATE, "utf8"))); } catch { return new Set(); } };
 const remember = (f) => { if (!STATE) return; const s = created(); s.add(f.toLowerCase()); try { fs.writeFileSync(STATE, JSON.stringify([...s])); } catch { /* ignore */ } };
-const inside = (f) => !!WORK && (f.toLowerCase() === WORK.toLowerCase() || f.toLowerCase().startsWith(WORK.toLowerCase() + path.sep));
+// The real location, following links and junctions, so a link inside the work folder can't point outside it.
+const real = (p) => {
+  let cur = path.resolve(p);
+  const rest = [];
+  while (!fs.existsSync(cur)) { const up = path.dirname(cur); if (up === cur) break; rest.unshift(path.basename(cur)); cur = up; }
+  try { cur = fs.realpathSync.native(cur); } catch { /* keep as is */ }
+  return path.join(cur, ...rest);
+};
+const inside = (f) => {
+  if (!WORK) return false;
+  const rel = path.relative(real(WORK), real(f));
+  return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+};
 
 let input = "";
 process.stdin.on("data", (d) => { input += d; });

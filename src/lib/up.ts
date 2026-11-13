@@ -10,6 +10,8 @@ const API = process.env.UP_API ?? "https://api.up.com.au/api/v1"; // overridable
 export interface Money {
   configured: boolean;
   error?: string;
+  /** set when the totals are incomplete (Up failed part-way, or too many transactions to fetch) */
+  partial?: string;
   balanceCents?: number;
   spent7dCents?: number;
   spent30dCents?: number;
@@ -37,9 +39,11 @@ export async function getMoney(): Promise<Money> {
     const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
     let url: string | null = `${API}/transactions?page[size]=100&filter[since]=${encodeURIComponent(since)}`;
     const txs: UpTx[] = [];
-    for (let i = 0; url && i < 5; i++) {
+    let partial: string | undefined;
+    for (let i = 0; url; i++) {
+      if (i >= 30) { partial = "Only the latest 3,000 transactions were counted, so spending totals may be low."; break; }
       const r: Response = await fetch(url, { headers, next: { revalidate: 300 } });
-      if (!r.ok) break;
+      if (!r.ok) { partial = `Up stopped answering part-way (${r.status}), so spending totals are incomplete.`; break; }
       const j = await r.json();
       txs.push(...(j.data ?? []));
       url = j.links?.next ?? null;
@@ -57,7 +61,7 @@ export async function getMoney(): Promise<Money> {
       cats.set(c, (cats.get(c) ?? 0) + out);
     }
     const topCategories = [...cats.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, cents]) => ({ name: nice(name), cents }));
-    return { configured: true, balanceCents, spent7dCents: spent7d, spent30dCents: spent30d, topCategories };
+    return { configured: true, balanceCents, spent7dCents: spent7d, spent30dCents: spent30d, topCategories, ...(partial ? { partial } : {}) };
   } catch (e) {
     return { configured: true, error: `Couldn't reach Up (${e instanceof Error ? e.message : "network"})` };
   }

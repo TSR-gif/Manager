@@ -33,16 +33,10 @@ export async function getActions(status?: Action["status"][]): Promise<Action[]>
 export async function getSettings(): Promise<Settings> {
   return unwrap(await db().from("settings").select("*").eq("id", 1).single());
 }
-/** Spend this month. includePending also counts paid actions still waiting for his OK. */
+/** Spend this month (in Thomas's time zone, by when it was approved). includePending also counts paid actions
+ *  still waiting for his OK. Worked out by the same database function the spend caps use. */
 export async function monthSpendCents(opts: { includePending?: boolean } = {}): Promise<number> {
-  const start = new Date();
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
-  const rows: { cost_cents: number }[] = unwrap(
-    await db().from("actions").select("cost_cents")
-      .in("status", opts.includePending ? ["pending", "approved", "executed"] : ["approved", "executed"]).gte("created_at", start.toISOString()),
-  );
-  return rows.reduce((s, r) => s + r.cost_cents, 0);
+  return Number(unwrap(await db().rpc("mm_budget_used", { p_exclude: null, p_include_pending: !!opts.includePending })) ?? 0);
 }
 
 /** Tasks completed and focus minutes since local midnight (Melbourne). */
@@ -59,9 +53,12 @@ export async function todayStats(): Promise<{ done: number; focusMinutes: number
     db().from("tasks").select("id", { count: "exact", head: true }).eq("status", "done").gte("done_at", since),
     db().from("focus_sessions").select("started_at,ended_at,planned_minutes").gte("started_at", since),
   ]);
-  const focusMinutes = (sessions.data ?? []).reduce((m: number, s: { started_at: string; ended_at: string | null }) => {
-    const end = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
-    return m + Math.max(0, (end - new Date(s.started_at).getTime()) / 60000);
+  const focusMinutes = (sessions.data ?? []).reduce((m: number, s: { started_at: string; ended_at: string | null; planned_minutes: number | null }) => {
+    // A session left open (forgot to press stop) counts for at most twice what was planned, not all day.
+    const start = new Date(s.started_at).getTime();
+    const cap = start + Math.max(1, s.planned_minutes ?? 50) * 2 * 60_000;
+    const end = s.ended_at ? new Date(s.ended_at).getTime() : Math.min(Date.now(), cap);
+    return m + Math.max(0, (end - start) / 60000);
   }, 0);
   return { done: count ?? 0, focusMinutes: Math.round(focusMinutes) };
 }

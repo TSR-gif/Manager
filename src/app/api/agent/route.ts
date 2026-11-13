@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { COOKIE, sameText, sessionToken } from "@/lib/auth";
+import { COOKIE, managerKey, sameText, sessionToken } from "@/lib/auth";
 import { runAgent } from "@/lib/agent/run";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
@@ -9,8 +9,9 @@ export const dynamic = "force-dynamic";
 
 /** POST { goal, runId? } -> NDJSON stream of agent events. */
 export async function POST(req: Request) {
+  // the browser (login cookie) or the phone bot (helper key). Claude sessions' tool pass doesn't work here.
   const token = (await cookies()).get(COOKIE)?.value;
-  if (!sameText(token, await sessionToken())) return new Response("Unauthorized", { status: 401 });
+  if (!sameText(token, await sessionToken()) && !sameText(req.headers.get("x-manager-key"), await managerKey())) return new Response("Unauthorized", { status: 401 });
   const { goal, runId } = (await req.json()) as { goal?: string; runId?: string };
   if (!goal?.trim()) return new Response("Missing goal", { status: 400 });
 

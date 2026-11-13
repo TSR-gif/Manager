@@ -2,6 +2,10 @@
 // with no Supabase account. Supports exactly what the app uses.
 //   node scripts/dev-rest.mjs                 -> built-in database (PGlite) stored in ./.localdb
 //   DATABASE_URL=postgres://... node ...      -> use a real Postgres instead
+//   node scripts/dev-rest.mjs --restore <backup.tar.gz>
+//                                             -> bring back a backup from .localdb-backups. Only into an empty spot:
+//                                                rename the current .localdb folder first (nothing is deleted).
+// A backup of the built-in database is saved once a day to .localdb-backups (the last 14 are kept).
 // Listens on :3001 (PORT_DB to change).
 import http from "node:http";
 import fs from "node:fs";
@@ -18,10 +22,35 @@ async function openDb() {
     return;
   }
   const { PGlite } = await import("@electric-sql/pglite");
-  const dir = path.join(ROOT, ".localdb");
-  const fresh = !fs.existsSync(dir);
-  const db = new PGlite(dir, { parsers: { 1082: (v) => v } });
+  const dir = process.env.LOCALDB_DIR || path.join(ROOT, ".localdb"); // tests use a throwaway folder
+  const restoreAt = process.argv.indexOf("--restore");
+  let loadDataDir;
+  if (restoreAt !== -1) {
+    const file = process.argv[restoreAt + 1];
+    if (!file || !fs.existsSync(file)) { console.error("Give the backup file to restore: --restore .localdb-backups/<date>.tar.gz"); process.exit(1); }
+    if (fs.existsSync(dir)) { console.error(`${dir} already exists. Rename it (for example to .localdb-old) and run this again. Nothing was changed.`); process.exit(1); }
+    loadDataDir = new Blob([fs.readFileSync(file)]);
+    console.log(`Restoring ${file} into ${dir}`);
+  }
+  const fresh = !fs.existsSync(dir) && !loadDataDir;
+  const db = new PGlite(dir, { parsers: { 1082: (v) => v }, ...(loadDataDir ? { loadDataDir } : {}) });
   await db.waitReady;
+  // Daily backup (a compressed copy of the whole database), newest 14 kept.
+  const backupDir = process.env.LOCALDB_BACKUPS || path.join(ROOT, ".localdb-backups");
+  const backup = async () => {
+    try {
+      fs.mkdirSync(backupDir, { recursive: true });
+      const name = `${new Date().toISOString().slice(0, 10)}.tar.gz`;
+      const target = path.join(backupDir, name);
+      if (fs.existsSync(target)) return;
+      const blob = await db.dumpDataDir("gzip");
+      fs.writeFileSync(`${target}.part`, Buffer.from(await blob.arrayBuffer()));
+      fs.renameSync(`${target}.part`, target);
+      console.log("backed up the database to", target);
+      const old = fs.readdirSync(backupDir).filter((f) => /^\d{4}-\d{2}-\d{2}\.tar\.gz$/.test(f)).sort().slice(0, -14);
+      for (const f of old) fs.unlinkSync(path.join(backupDir, f));
+    } catch (e) { console.error("backup failed:", e.message); }
+  };
   pool = { query: (sql, vals) => db.query(sql, vals) };
   // apply any migrations not yet applied, then seed a brand-new database
   await db.exec("create table if not exists _local_migrations (name text primary key, applied_at timestamptz default now())");
@@ -31,12 +60,17 @@ async function openDb() {
     for (const f of fs.readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort()) {
       if (done.has(f)) continue;
       const sql = fs.readFileSync(path.join(migDir, f), "utf8").replace(/^create extension.*$/gim, "");
-      await db.exec(sql);
-      await db.query("insert into _local_migrations (name) values ($1)", [f]);
+      // The change and the note that it's applied go in together, or neither does (no half-applied migrations).
+      await db.transaction(async (tx) => {
+        await tx.exec(sql);
+        await tx.query("insert into _local_migrations (name) values ($1)", [f]);
+      });
       console.log("applied", f);
     }
   };
+  if (!fresh) await backup(); // before applying anything new
   await migrate();
+  setInterval(() => { void backup(); }, 6 * 3600_000).unref();
   // after a `git pull` the new database changes apply by themselves, no restart needed
   setInterval(() => { migrate().catch((e) => console.error("migration failed:", e.message)); }, 15_000).unref();
   if (fresh) {
@@ -104,9 +138,35 @@ async function body(req) {
   return t ? JSON.parse(t) : null;
 }
 
+// Only MyManager itself may use the database: it sends this key (SUPABASE_SERVICE_ROLE_KEY). scripts/local.mjs
+// makes a random one per PC, and coding helpers never get it, so they can't edit approvals behind the app's back.
+const DB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const keyOk = (req) => {
+  const k = String(req.headers["apikey"] ?? "") || String(req.headers["authorization"] ?? "").replace(/^Bearer\s+/i, "");
+  if (!DB_KEY || k.length !== DB_KEY.length) return false;
+  let d = 0;
+  for (let i = 0; i < k.length; i++) d |= k.charCodeAt(i) ^ DB_KEY.charCodeAt(i);
+  return d === 0;
+};
+// Database functions the app may call (supabase-js .rpc()). Listed here so nothing else can be called.
+const RPC = new Set(["mm_queue_paid_action", "mm_claim_action", "mm_budget_used", "mm_create_invoice"]);
+
 const server = http.createServer(async (req, res) => {
   try {
+    if (!keyOk(req)) { res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ message: "Missing or wrong database key" })); return; }
     const url = new URL(req.url, "http://x");
+    const rpc = url.pathname.match(/^\/(?:rest\/v1\/)?rpc\/([a-z_]+)$/);
+    if (rpc) {
+      if (req.method !== "POST" || !RPC.has(rpc[1])) { res.writeHead(404).end(); return; }
+      const args = (await body(req)) ?? {};
+      const keys = Object.keys(args).filter((k) => /^p_[a-z_]+$/.test(k));
+      const v = keys.map((k) => (args[k] !== null && typeof args[k] === "object" ? JSON.stringify(args[k]) : args[k]));
+      const out = (await pool.query(`select * from ${ident(rpc[1])}(${keys.map((k, i) => `${k} => $${i + 1}`).join(", ")})`, v)).rows;
+      // a function that returns one value comes back as that value, like PostgREST
+      const scalar = out.length === 1 && Object.keys(out[0]).length === 1 && Object.keys(out[0])[0] === rpc[1];
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(scalar ? out[0][rpc[1]] : out));
+      return;
+    }
     const table = ident(url.pathname.replace(/^\/(rest\/v1\/)?/, ""));
     const p = url.searchParams;
     const prefer = req.headers["prefer"] ?? "";

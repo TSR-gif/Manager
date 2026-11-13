@@ -19,7 +19,7 @@ if (!fs.existsSync(envFile)) {
     `APP_PASSWORD=${firstPassword}`,
     `AUTH_SECRET=${crypto.randomBytes(24).toString("hex")}`,
     "SUPABASE_URL=http://localhost:3001",
-    "SUPABASE_SERVICE_ROLE_KEY=local",
+    `SUPABASE_SERVICE_ROLE_KEY=${crypto.randomBytes(24).toString("hex")}`,
     "# Agent brain: 'claude-code' uses the Claude Code app already signed in on this PC.",
     "# Set to 'api' and fill ANTHROPIC_API_KEY to use the Claude API instead.",
     "AGENT_BACKEND=claude-code",
@@ -45,6 +45,11 @@ for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
 }
 if (!env.APP_PASSWORD || ["manager", "password", "changeme"].includes(env.APP_PASSWORD.toLowerCase())) {
   console.log("\n  WARNING: your MyManager password is still the default. Change APP_PASSWORD in .env.local, then restart.\n");
+}
+// The built-in database checks a key on every request. Older installs have the placeholder "local", which anyone
+// could send, so use a key worked out from this PC's AUTH_SECRET instead. Only the database and the app get it.
+if (!env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_ROLE_KEY === "local") {
+  env.SUPABASE_SERVICE_ROLE_KEY = crypto.createHash("sha256").update(`${env.AUTH_SECRET ?? crypto.randomBytes(24).toString("hex")}:local-db`).digest("hex");
 }
 // Same value as managerKey() in src/lib/auth.ts (tests/security.test.mjs checks they match).
 const managerKey = crypto.createHash("sha256").update(`${env.AUTH_SECRET ?? "manager"}:${env.APP_PASSWORD ?? ""}`).digest("hex");

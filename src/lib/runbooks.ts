@@ -1,5 +1,5 @@
 import "server-only";
-import { commandProblem, isReadOnlyCommand } from "@/lib/command-safety.mjs";
+import { commandProblem, isLoginCommand, isReadOnlyCommand } from "@/lib/command-safety.mjs";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
 import { allProcesses } from "@/lib/activity";
+import { workerEnv } from "@/lib/worker-env";
+import { nextMove } from "@/lib/runbook-order.mjs";
 
 /**
  * Runbooks: a list of steps MyManager carries out on Thomas's PC and watches.
@@ -39,6 +41,11 @@ export interface Step {
   url?: string; text?: string;
   /** handoff: false = doesn't hold up the rest (e.g. "sign in if asked") */
   blocking?: boolean;
+  /** start_job / watch_process: true = later steps don't wait for this job to finish. By default they wait. */
+  independent?: boolean;
+  /** How it really ended, when that's known: finished (exit 0), failed, interrupted (stopped with no exit code),
+   *  not_found (watch: it wasn't running), unverified (it stopped, but nothing says how). */
+  outcome?: "finished" | "failed" | "interrupted" | "not_found" | "unverified";
   status: "todo" | "running" | "waiting" | "done" | "skipped" | "failed";
   note?: string;
   started_at?: string; finished_at?: string;
@@ -58,16 +65,36 @@ const BULKY = /(^|\/)(\.?venv[^/]*|node_modules|__pycache__|\.next|dist|build)(\
 export async function logRunbook(id: string, text: string) {
   await db().from("runbook_log").insert({ runbook_id: id, text: text.slice(0, 2000) });
 }
-async function save(r: Runbook, extra: Partial<Runbook> = {}) {
+/** Saves the runbook. Unless force is set it only saves while it's still running or waiting, so the runner can't
+ *  undo a Stop that Thomas pressed while a step was going. Returns false when it was stopped meanwhile. */
+async function save(r: Runbook, extra: Partial<Runbook> = {}, force = false) {
   Object.assign(r, extra);
-  await db().from("runbooks").update({ steps: r.steps, status: r.status, last_update: r.last_update, started_at: r.started_at, finished_at: r.finished_at }).eq("id", r.id);
+  let q = db().from("runbooks").update({ steps: r.steps, status: r.status, last_update: r.last_update, started_at: r.started_at, finished_at: r.finished_at }).eq("id", r.id);
+  if (!force) q = q.in("status", ["running", "waiting"]);
+  const { data, error } = await q.select("id");
+  if (error) throw new Error(`Couldn't save the runbook: ${error.message}`);
+  return (data ?? []).length > 0;
+}
+/** True while the runbook may still do things (checked right before every step that changes something). */
+async function stillOn(id: string) {
+  const { data } = await db().from("runbooks").select("status").eq("id", id).maybeSingle();
+  return !!data && ["running", "waiting"].includes(data.status as string);
 }
 const now = () => new Date().toISOString();
 const alive = (pid?: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
+/** The real path (links and junctions followed) of rel inside base, or null if it would land outside base. */
+const realish = (p: string) => {
+  let cur = path.resolve(p);
+  const rest: string[] = [];
+  while (!fs.existsSync(cur)) { const up = path.dirname(cur); if (up === cur) break; rest.unshift(path.basename(cur)); cur = up; }
+  try { cur = fs.realpathSync.native(cur); } catch { /* keep */ }
+  return path.join(cur, ...rest);
+};
 const inside = (base: string, rel: string) => {
+  if (!base || !rel) return null;
   const full = path.resolve(base, rel);
-  const b = path.resolve(base);
-  return full !== b && full.toLowerCase().startsWith((b + path.sep).toLowerCase()) ? full : null;
+  const r = path.relative(realish(base), realish(full));
+  return r && !r.startsWith("..") && !path.isAbsolute(r) ? full : null;
 };
 
 /** Checks a drafted list before Thomas sees it. Returns problems in plain words. */
@@ -80,6 +107,7 @@ export function checkSteps(steps: Step[], dir: string | null): string[] {
     if (s.kind === "start_job" && s.file && !/\.(bat|cmd|py|ps1|sh)$/i.test(s.file)) out.push(`"${s.label}": only .bat, .cmd, .py, .ps1 or .sh files can be started.`);
     if (s.kind === "delete_folder" && dir && (!s.path || !inside(dir, s.path) || /(^|[\\/])\.git([\\/]|$)/.test(s.path))) out.push(`"${s.label}": can only delete a folder inside the project (never the project itself or .git).`);
     if ((s.kind === "run_command" || (s.kind === "handoff" && s.command)) && commandProblem(s.command)) out.push(`"${s.label}": ${commandProblem(s.command)}`);
+    else if (s.kind === "handoff" && s.command && !isLoginCommand(s.command)) out.push(`"${s.label}": a hand-over can only open a sign-in (gh auth login, vercel login, supabase login, npm login). Make "${s.command}" a run_command step so it asks first.`);
     if (s.kind === "stop_process" && !(s.match ?? "").trim()) out.push(`"${s.label}": say which program to close.`);
     if (/password|card number|cvv|2fa code/i.test(`${s.command ?? ""} ${s.text ?? ""}`) && s.kind !== "handoff") out.push(`"${s.label}": passwords and card details are never typed by MyManager. Make it a hand-over step.`);
   }
@@ -90,7 +118,7 @@ export function stepSummary(s: Step) {
   const opt = s.optional ? " (optional, asks first)" : "";
   switch (s.kind) {
     case "watch_process": return `Watch ${s.match} (already running) and tell you when it finishes or stalls`;
-    case "start_job": return `Start ${s.file}${s.expect_hours ? `, about ${s.expect_hours} h` : ""}, keep the PC awake and watch it${opt}`;
+    case "start_job": return `Start ${s.file}${s.expect_hours ? `, about ${s.expect_hours} h` : ""}, keep the PC awake and watch it${s.independent ? " (the next steps don't wait for it)" : " (the next steps wait until it finishes)"}${opt}`;
     case "stop_process": return `Close ${s.match} if it's running${opt}`;
     case "git_commit_push": return `Commit everything new (skipping key files and venv folders) and push to GitHub${opt}`;
     case "delete_folder": return `Delete the folder ${s.path} (asks you again first)`;
@@ -119,7 +147,7 @@ export async function startRunbook(id: string) {
   const r = data as Runbook | null;
   if (!r) throw new Error("Runbook not found");
   if (!["queued", "draft", "stopped", "failed"].includes(r.status)) return { note: `Already ${r.status}` };
-  await save(r, { status: "running", started_at: r.started_at ?? now(), last_update: "Started" });
+  await save(r, { status: "running", started_at: r.started_at ?? now(), last_update: "Started" }, true);
   await logRunbook(id, "Thomas approved it. Starting.");
   void notify(`▶️ Started: **${r.title}**. I'll tell you when something needs you.`);
   ensureLoop();
@@ -132,7 +160,7 @@ export async function stopRunbook(id: string) {
   const r = data as Runbook | null;
   if (!r) return;
   for (const s of r.steps.list) if (s.status === "todo" || s.status === "waiting") s.status = "skipped";
-  await save(r, { status: "stopped", finished_at: now(), last_update: "Stopped by you. Jobs already started keep running." });
+  await save(r, { status: "stopped", finished_at: now(), last_update: "Stopped by you. Jobs already started keep running." }, true);
   await logRunbook(id, "Stopped by Thomas. Anything already started keeps running.");
 }
 
@@ -142,9 +170,10 @@ export async function resolveStep(id: string, stepId: string, outcome: "done" | 
   const r = data as Runbook | null;
   const s = r?.steps.list.find((x) => x.id === stepId);
   if (!r || !s) return;
+  if (!["running", "waiting"].includes(r.status)) return; // stopped or finished: nothing more happens
   if (outcome === "approved") { s.status = "todo"; s.note = "approved"; }
   else if (outcome === "rejected") { s.status = "skipped"; s.note = "You said no, so I skipped it."; s.finished_at = now(); }
-  else if (outcome === "done" && s.kind !== "handoff") { s.status = "todo"; s.blocking = undefined; s.note = "You fixed it, trying again."; }
+  else if (outcome === "done" && s.kind !== "handoff") { s.status = "todo"; s.blocking = undefined; s.approval_id = undefined; s.outcome = undefined; s.note = "You fixed it, trying again."; }
   else { s.status = outcome; s.finished_at = now(); s.note = outcome === "done" ? "You did this." : "Not needed."; }
   if (r.status === "waiting") r.status = "running";
   await save(r);
@@ -153,7 +182,10 @@ export async function resolveStep(id: string, stepId: string, outcome: "done" | 
 }
 
 const advancing = new Set<string>();
-/** Run the next steps until one has to wait. Safe to call often. */
+const isJob = (s: Step) => s.kind === "start_job" || s.kind === "watch_process";
+/** Run the next steps until one has to wait. Safe to call often.
+ *  Steps run in order and each waits for the one before it: a step that failed stops the ones after it (Thomas can
+ *  try it again, skip it, or stop), and a running job holds up the next step unless it was marked independent. */
 export async function advance(id: string): Promise<void> {
   if (advancing.has(id)) return;
   advancing.add(id);
@@ -164,23 +196,47 @@ export async function advance(id: string): Promise<void> {
       if (!r || !["running", "waiting"].includes(r.status)) return;
       await watchJobs(r);
       const list = r.steps.list;
-      const blocked = list.find((s) => s.status === "waiting" && s.blocking !== false);
-      if (blocked) { if (r.status !== "waiting") await save(r, { status: "waiting", last_update: `Waiting on you: ${blocked.label}` }); return; }
-      const next = list.find((s) => s.status === "todo");
-      if (!next) {
-        const jobs = list.filter((s) => (s.kind === "start_job" || s.kind === "watch_process") && s.status === "running");
-        const softWaiting = list.filter((s) => s.status === "waiting");
-        if (jobs.length) { await save(r, { status: "running", last_update: `All steps done. Watching ${jobs.map((j) => j.file).join(", ")}.` }); return; }
-        for (const s of softWaiting) { s.status = "skipped"; s.note = "Wasn't needed."; }
-        const failed = list.filter((s) => s.status === "failed");
-        await save(r, { status: failed.length ? "failed" : "done", finished_at: now(), last_update: failed.length ? `Finished, but ${failed.length} step${failed.length > 1 ? "s" : ""} didn't work: ${failed.map((f) => f.label).join("; ")}` : "All done." });
-        await logRunbook(id, failed.length ? "Finished with problems." : "All done.");
-        void import("@/lib/missions").then((m) => m.wakeHelpers("runbook_finished", `${r.title}: ${failed.length ? "finished with problems" : "all done"}`, r.project_id)).catch(() => {});
-        void notify(failed.length ? `⚠️ **${r.title}** finished, but ${failed.map((f) => `"${f.label}"`).join(", ")} didn't work. Details are on the Running screen.` : `✅ **${r.title}** is done.`);
+      const move = nextMove(list);
+      if (move.do === "wait_you") {
+        const msg = `Waiting on you: ${move.step!.label}`;
+        if (r.status !== "waiting" || r.last_update !== msg) await save(r, { status: "waiting", last_update: msg });
         return;
       }
+      if (move.do === "hold_failed") {
+        // A required step failed: hold here and ask Thomas, don't run what depends on it.
+        const b = move.step!;
+        b.status = "waiting"; b.blocking = true; b.approval_id = undefined;
+        b.note = `Didn't work: ${b.note ?? "it failed"}. The steps after it are on hold. Try it again, skip it, or stop.`;
+        await save(r, { status: "waiting", last_update: `Stuck at: ${b.label}` });
+        void notify(`⚠️ **${r.title}**: "${b.label}" didn't work, so I held the rest. Try again, skip it, or stop, on the Running screen.`);
+        await logRunbook(id, `${b.label} failed; holding the steps after it.`);
+        return;
+      }
+      if (move.do === "wait_job") {
+        // A job that's still going holds up the next step unless it was marked independent.
+        const msg = `Waiting for ${move.step!.file ?? move.step!.match ?? move.step!.label} to finish before: ${move.next!.label}`;
+        if (r.status !== "running" || r.last_update !== msg) await save(r, { status: "running", last_update: msg });
+        return;
+      }
+      const next = move.do === "run" ? move.step! : undefined;
+      if (!next) {
+        const jobs = list.filter((s) => isJob(s) && s.status === "running");
+        const softWaiting = list.filter((s) => s.status === "waiting");
+        if (jobs.length) { await save(r, { status: "running", last_update: `All steps done. Watching ${jobs.map((j) => j.file ?? j.match).join(", ")}.` }); return; }
+        for (const s of softWaiting) { s.status = "skipped"; s.note = "Wasn't needed."; }
+        const failed = list.filter((s) => s.status === "failed");
+        const unsure = list.filter((s) => s.outcome === "unverified");
+        const ok = await save(r, { status: failed.length ? "failed" : "done", finished_at: now(), last_update: failed.length ? `Finished, but ${failed.length} step${failed.length > 1 ? "s" : ""} didn't work: ${failed.map((f) => f.label).join("; ")}` : unsure.length ? `Finished, but I couldn't confirm how ${unsure.map((u) => u.label).join("; ")} ended. Check its log.` : "All done." });
+        if (!ok) return;
+        await logRunbook(id, failed.length ? "Finished with problems." : unsure.length ? "Finished; some results unconfirmed." : "All done.");
+        void import("@/lib/missions").then((m) => m.wakeHelpers("runbook_finished", `${r.title}: ${failed.length ? "finished with problems" : unsure.length ? "finished, not confirmed" : "all done"}`, r.project_id)).catch(() => {});
+        void notify(failed.length ? `⚠️ **${r.title}** finished, but ${failed.map((f) => `"${f.label}"`).join(", ")} didn't work. Details are on the Running screen.` : unsure.length ? `☑️ **${r.title}** finished, but I couldn't confirm ${unsure.map((u) => `"${u.label}"`).join(", ")} worked. Check its log.` : `✅ **${r.title}** is done.`);
+        return;
+      }
+      // Stop pressed since this pass began? Then do nothing more.
+      if (!(await stillOn(id))) return;
       await doStep(r, next);
-      await save(r);
+      if (!(await save(r))) { await logRunbook(id, `Stopped while "${next.label}" was going; nothing after it runs.`); return; }
       if (next.status === "waiting" && next.blocking !== false) continue; // loop sees it and stops
     }
   } catch (e) {
@@ -215,7 +271,7 @@ async function doStep(r: Runbook, s: Step) {
         const procs = (await allProcesses()) ?? [];
         const m = (s.match ?? "").toLowerCase();
         const hits = procs.filter((p) => p.cmd.toLowerCase().includes(m) && p.pid !== process.pid && !/get-ciminstance/i.test(p.cmd));
-        if (!hits.length) { s.status = "done"; s.note = "It isn't running (already finished, or not started yet)."; break; }
+        if (!hits.length) { s.status = "failed"; s.outcome = "not_found"; s.note = "It isn't running, so I can't tell whether it finished or never started. Check its log or output."; break; }
         // follow the top-most one (the window), and the newest matching log if one was named
         const top = hits.find((h) => /cmd\.exe|^sh$|bash/i.test(h.name)) ?? hits[0];
         s.pid = top.pid; s.status = "running";
@@ -235,7 +291,12 @@ async function doStep(r: Runbook, s: Step) {
         const [cmd, args] = isWin
           ? ext === ".py" ? ["py", ["-u", file]] : ext === ".ps1" ? ["powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file]] : ["cmd.exe", ["/d", "/c", file]]
           : ext === ".py" ? ["python3", ["-u", file]] : ["sh", [file]];
-        const child = spawn(cmd, args as string[], { cwd: path.dirname(file), detached: true, windowsHide: true, stdio: ["ignore", fd, fd], env: { ...process.env, PYTHONUNBUFFERED: "1" } });
+        // Started through scripts/job-runner.mjs, which writes the exit code to <log>.exit, so how it ended is
+        // still known after MyManager restarts. MyManager's own keys and tokens aren't passed to the job.
+        try { fs.rmSync(`${log}.exit`, { force: true }); } catch { /* none */ }
+        if (!(await stillOn(r.id))) { fs.closeSync(fd); s.status = "skipped"; s.note = "Stopped before it started."; return; }
+        const runner = path.join(process.cwd(), "scripts", "job-runner.mjs");
+        const child = spawn(process.execPath, [runner, `${log}.exit`, cmd as string, ...(args as string[])], { cwd: path.dirname(file), detached: true, windowsHide: true, stdio: ["ignore", fd, fd], env: workerEnv({ PYTHONUNBUFFERED: "1" }) });
         fs.closeSync(fd);
         child.on("exit", (code) => { exits.set(child.pid ?? -1, code); });
         child.unref();
@@ -277,6 +338,7 @@ async function doStep(r: Runbook, s: Step) {
         await git("add", "-A", "--", ".", ":!*.env", ":!**/*.env", ":!.venv*", ":!**/.venv*", ":!venv", ":!**/node_modules", ":!**/__pycache__");
         const staged = (await git("diff", "--cached", "--name-only")).split("\n").filter(Boolean);
         if (staged.length) await git("commit", "-m", s.message || `Save work (${new Date().toISOString().slice(0, 10)})`);
+        if (!(await stillOn(r.id))) { s.status = "done"; s.note = `Committed ${staged.length} files. Stopped before pushing.`; break; }
         const branch = (await git("rev-parse", "--abbrev-ref", "HEAD")).trim();
         const pushed = await git("push", "-u", "origin", branch).then(() => true, (e) => { s.note = `Committed ${staged.length} files, but the push failed: ${String(e.stderr ?? e).slice(0, 200)}`; return false; });
         s.status = pushed ? "done" : "failed";
@@ -288,6 +350,7 @@ async function doStep(r: Runbook, s: Step) {
         if (!full) { s.status = "failed"; s.note = "That folder isn't inside the project."; break; }
         if (!fs.existsSync(full)) { s.status = "done"; s.note = "It was already gone."; break; }
         if (await needsOk(r, s, `Deletes ${full}. This can't be undone.`)) return;
+        if (!(await stillOn(r.id))) { s.status = "skipped"; s.note = "Stopped before deleting."; break; }
         fs.rmSync(full, { recursive: true, force: true, maxRetries: 3 });
         s.status = "done"; s.note = "Deleted.";
         break;
@@ -299,7 +362,7 @@ async function doStep(r: Runbook, s: Step) {
       }
       case "handoff": {
         if (s.url) openThing(s.url);
-        if (s.command) openTerminal(s.command, dir || os.homedir(), s.label);
+        if (s.command && isLoginCommand(s.command)) openTerminal(s.command, dir || os.homedir(), s.label);
         s.status = "waiting";
         s.note = s.blocking === false ? "Only if needed. Press Done or Not needed." : "Your turn. Press Done when you've finished.";
         void notify(`🙋 **${r.title}**: ${s.text ?? s.label}${s.url || s.command ? " I've opened it on your PC." : ""} Press Done in MyManager when you've finished.`);
@@ -315,7 +378,8 @@ async function doStep(r: Runbook, s: Step) {
           break;
         }
         if (!isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
-        const out = await run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/c", c] : ["-c", c], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true })
+        if (!(await stillOn(r.id))) { s.status = "skipped"; s.note = "Stopped before it ran."; break; }
+        const out = await run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/c", c] : ["-c", c], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true, env: workerEnv() })
           .then((x) => ({ ok: true, text: `${x.stdout}${x.stderr}` }), (e) => ({ ok: false, text: `${e.stdout ?? ""}${e.stderr ?? e.message ?? e}` }));
         s.status = out.ok ? "done" : "failed";
         s.note = out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600) || (out.ok ? "Done." : "It failed.");
@@ -348,7 +412,7 @@ function openThing(target: string) {
 
 /** A visible window running a sign-in command (e.g. `vercel login`) so Thomas can finish it himself. */
 function openTerminal(command: string, cwd: string, title: string) {
-  if (commandProblem(command)) return;
+  if (!isLoginCommand(command)) return; // hand-overs only ever open a sign-in
   if (isWin) spawn("cmd.exe", ["/d", "/c", "start", `"${title.replace(/"/g, "")}"`, "cmd.exe", "/k", command], { cwd, detached: true, stdio: "ignore", windowsVerbatimArguments: false }).on("error", () => {}).unref();
 }
 
@@ -373,15 +437,26 @@ async function watchJobs(r: Runbook) {
     const started = new Date(s.started_at ?? now()).getTime();
     const hours = (Date.now() - started) / 3600_000;
     if (!alive(s.pid)) {
-      const code = exits.get(s.pid ?? -1);
+      // How did it end? A job MyManager started leaves its exit code in <log>.exit (scripts/job-runner.mjs).
+      let code: number | null | undefined = exits.get(s.pid ?? -1);
+      if (code === undefined && s.kind === "start_job" && s.log) {
+        try { const ex = JSON.parse(fs.readFileSync(`${s.log}.exit`, "utf8")) as { code?: number | null }; code = ex.code ?? null; } catch { /* no record */ }
+      }
       s.exit_code = code ?? null;
       const last = tail(s.log, 3);
-      const bad = (code != null && code !== 0) || /traceback|error|failed/i.test(last);
-      s.status = bad ? "failed" : "done"; s.finished_at = now();
-      s.note = `${bad ? "Stopped with a problem" : "Finished"} after ${hours < 1 ? `${Math.round(hours * 60)} min` : `${hours.toFixed(1)} h`}.${last ? ` Last lines: ${last.replace(/\n/g, " / ").slice(0, 300)}` : ""}`;
-      await logRunbook(r.id, `${s.file}: ${s.note}`);
-      void notify(`${bad ? "⚠️" : "✅"} **${s.file}** ${s.note}`);
-      void import("@/lib/missions").then((m) => m.wakeHelpers("job_finished", `${s.file}: ${s.note}`, r.project_id)).catch(() => {});
+      const took = hours < 1 ? `${Math.round(hours * 60)} min` : `${hours.toFixed(1)} h`;
+      if (code === 0 && !/traceback/i.test(last)) { s.status = "done"; s.outcome = "finished"; }
+      else if (code != null) { s.status = "failed"; s.outcome = "failed"; }
+      else if (s.kind === "start_job") { s.status = "failed"; s.outcome = "interrupted"; } // ours, but no exit code: closed or the PC restarted
+      else if (/traceback|error|failed/i.test(last)) { s.status = "failed"; s.outcome = "failed"; }
+      else { s.status = "done"; s.outcome = "unverified"; } // someone else's program: we can only say it stopped
+      s.finished_at = now();
+      const head = { finished: "Finished", failed: `Stopped with a problem${code != null ? ` (exit code ${code})` : ""}`, interrupted: "Stopped without saying how it ended (it was closed, or the PC restarted)", unverified: "Stopped running. I can't see how it ended, so check it worked", not_found: "Not running" }[s.outcome!];
+      s.note = `${head} after ${took}.${last ? ` Last lines: ${last.replace(/\n/g, " / ").slice(0, 300)}` : ""}`;
+      const bad = s.status === "failed";
+      await logRunbook(r.id, `${s.file ?? s.match}: ${s.note}`);
+      void notify(`${bad ? "⚠️" : s.outcome === "unverified" ? "☑️" : "✅"} **${s.file ?? s.match}** ${s.note}`);
+      void import("@/lib/missions").then((m) => m.wakeHelpers("job_finished", `${s.file ?? s.match}: ${s.note}`, r.project_id)).catch(() => {});
       changed = true;
       continue;
     }
