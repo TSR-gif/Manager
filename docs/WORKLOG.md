@@ -151,3 +151,21 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - **Private usage log** (`usage_events`): which screens, phone or computer, how long. Shown in the weekly review and given to the assistant so it can suggest changes (always asks first).
 - Launcher restarts the Telegram bot by itself if it drops.
 - Phone overflow check passes on every main screen. Before/after screenshots in project files.
+
+**11:30–12:15 — Socials and ads for your apps (Marketing)**
+- New **Marketing** screen per project (Bargie first): what's coming up by day, reply drafts, ads, and the jobs that run every week.
+- **Posts**: ask in plain words ("make 3 Bargie posts") and MyManager drafts picture slideshows, captions and hashtags from real numbers only. Each one waits in Approvals with a phone-style preview. You approve, post it yourself, then tap "I posted it". Tested with real prices: 2 posts and a comment reply, totals checked.
+- **Ads**: campaign drafts (where, who sees it, what it says, $ a day × days). Launching an ad or changing its budget always asks you and counts against your spending limits. Approving doesn't launch it: you launch it in the ads dashboard, then tap "I've launched it". Spend and downloads are logged there or by telling MyManager, with cost per download. Tested: $5/day × 7 = a $35 launch waiting for your OK.
+- **Weekly jobs**: standing instructions on a schedule ("every Wednesday at 2 pm"), with templates. The two Bargie jobs are set up and **off** until you switch them on. They only ever make drafts.
+- MyManager never posts, launches ads or creates accounts.
+
+**12:15–12:40 — Supervise: "Day trader is doing X, Y and Z, make sure it gets finished"**
+- Tell MyManager what a project is doing. It turns that into steps, checks on it on a schedule (every 15 min to once a day), and ticks off only what it can see is done.
+- When it needs you, it asks one short question on Today, on the Supervise screen and on Telegram. Reply to the Telegram message, or type in the app, and it carries on straight away.
+- **Coding steps (optional)**: give it the project's folder on your PC and approve "Work on your code" once for that mission. It then codes one step at a time with Claude Code, on its own branch, commits, and never pushes, deploys or touches real money.
+- Tested on a copy of Day trader: "tidy the .bak files and update the README". It made 5 steps and removed 73 unused backup files. It rewrote the README to say it trades with Alpaca pretend money only, then marked the mission finished. Two commits on `mymanager/…`, nothing pushed.
+- **"How's everything going?"** gives one line per project: what's running, what finished this week, what needs you. It's also in the morning catch-up when something is being supervised.
+
+**12:40 — Installed on Thomas's PC** (Documents\MyManager). Node, Git and gh were already there, and the Claude CLI was installed with npm. MyManager calls `claude.cmd` so Windows' PowerShell block doesn't matter. Runs on the PC only for now: no Supabase or Vercel.
+
+**12:45 — New look**: three directions for Today (dark command centre, clean and bright, bold and colourful) in project files `manager/ui-directions/`, waiting for Thomas to pick.
