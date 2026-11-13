@@ -69,6 +69,12 @@ setTimeout(() => {
   } catch {}
 }, 6000);
 
+// Proactive assistant: ask Manager every 5 minutes whether a brief or check-in is due.
+const tickProactive = () => fetch("http://localhost:3000/api/proactive", {
+  method: "POST", headers: { "Content-Type": "application/json", "x-manager-key": managerKey }, body: JSON.stringify({ op: "tick" }),
+}).then((r) => r.json()).then((j) => { if (j.kind) console.log(`[assistant] ${j.kind} ${j.quiet ? "(nothing to report)" : "sent"}`); }).catch(() => {});
+setTimeout(() => { tickProactive(); setInterval(tickProactive, 5 * 60_000); }, 60_000);
+
 let bot = null;
 if (env.TELEGRAM_BOT_TOKEN) {
   setTimeout(() => {

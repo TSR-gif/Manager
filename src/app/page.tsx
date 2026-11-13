@@ -10,6 +10,9 @@ import { TaskItem } from "@/components/task-item";
 import { OpenCommandButton } from "@/components/open-command";
 import { AskBar } from "@/components/ask-bar";
 import { getMoney } from "@/lib/up";
+import { db } from "@/lib/db";
+import { Orb } from "@/components/orb";
+import { Md } from "@/components/md";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +46,9 @@ export default async function Today() {
   const today = todayISO();
   const everydayToday = everyday.filter((t) => t.due && t.due.slice(0, 10) <= today || t.status === "doing");
   const everydayLater = everyday.filter((t) => !everydayToday.includes(t));
+  const name = (settings as { assistant_name?: string }).assistant_name || "Manager";
+  const { data: unreadRuns } = await db().from("agent_runs").select("id,kind,goal,summary,created_at").eq("unread", true).order("created_at", { ascending: false }).limit(3);
+  const inboxRuns = (unreadRuns ?? []) as { id: string; kind: string; goal: string; summary: string | null; created_at: string }[];
   const reviewDue = !settings.last_review_at || Date.now() - new Date(settings.last_review_at).getTime() > 7 * 86_400_000;
   const hour = Number(new Intl.DateTimeFormat("en-AU", { hour: "numeric", hourCycle: "h23", timeZone: TZ }).format(new Date()));
   const greeting = hour < 5 ? "Late night" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -61,7 +67,25 @@ export default async function Today() {
         </div>
       </header>
 
-      <AskBar />
+      <AskBar name={name} />
+
+      {inboxRuns.length > 0 && (
+        <section className="space-y-2">
+          {inboxRuns.map((r) => (
+            <Link key={r.id} href={`/agent?run=${r.id}`} className="card card-hover flex gap-3 !p-4 !border-[rgba(139,123,255,.35)]">
+              <Orb size={28} />
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex items-center gap-2 text-[12px] text-muted">
+                  <b className="text-text">{name}</b>
+                  <span>· {r.kind === "brief" ? "Morning brief" : r.kind === "checkin" ? "Checked in" : "Finished a job"}</span>
+                  <span className="ml-auto text-faint">{new Date(r.created_at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: TZ })}</span>
+                </div>
+                <div className="line-clamp-4 text-[14px] leading-relaxed"><Md text={r.summary ?? r.goal} /></div>
+              </div>
+            </Link>
+          ))}
+        </section>
+      )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat icon={<CheckCircle2 size={18} />} label="Done today" value={stats.done} tone="var(--good)" />

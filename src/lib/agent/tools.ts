@@ -114,7 +114,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
     switch (name) {
       case "get_overview": {
         const [projects, tasks, ideas, pending] = await Promise.all([
-          db().from("projects").select("id,name,kind,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at").order("priority"),
+          db().from("projects").select("id,name,kind,watch,status,priority,next_action,goal,deadline,github_repo,vercel_project,last_touched_at").order("priority"),
           db().from("tasks").select("id,title,status,priority,due,project_id").neq("status", "done").limit(200),
           db().from("ideas").select("id,text").eq("status", "inbox").limit(50),
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),

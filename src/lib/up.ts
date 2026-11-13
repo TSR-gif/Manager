@@ -59,6 +59,6 @@ export async function getMoney(): Promise<Money> {
     const topCategories = [...cats.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, cents]) => ({ name: nice(name), cents }));
     return { configured: true, balanceCents, spent7dCents: spent7d, spent30dCents: spent30d, topCategories };
   } catch (e) {
-    return { configured: true, error: String(e) };
+    return { configured: true, error: `Couldn't reach Up (${e instanceof Error ? e.message : "network"})` };
   }
 }

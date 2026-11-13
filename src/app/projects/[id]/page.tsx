@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, GitBranch, Globe, ListTodo, Send, Settings2, Sparkles, TriangleAlert, History } from "lucide-react";
-import { addTask, requestAction, saveProject } from "@/app/actions";
+import { addTask, requestAction, saveProject, toggleWatch } from "@/app/actions";
+import { Orb } from "@/components/orb";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
 import { Empty, PriorityBadge, ProjectAvatar, SignalChips, StatusDot, ago } from "@/components/ui";
@@ -52,6 +53,13 @@ export default async function ProjectPage({
               {p.kind === "client" && <span className="chip chip-accent2">Client job</span>}
               <span className="chip capitalize">{p.status}</span>
               <SignalChips s={s} />
+              <form action={toggleWatch} className="inline">
+                <input type="hidden" name="id" value={p.id} />
+                <button className={`chip cursor-pointer transition hover:border-accent ${(p as { watch?: boolean }).watch ? "chip-accent" : ""}`}
+                  title="A specialist checks this project in every check-in and tells you when it slips">
+                  {(p as { watch?: boolean }).watch ? <><Orb size={10} /> Specialist watching</> : "+ Add a specialist"}
+                </button>
+              </form>
             </div>
           )}
         </div>

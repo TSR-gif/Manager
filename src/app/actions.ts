@@ -258,6 +258,26 @@ export async function unpairPhone() {
   refresh();
 }
 
+export async function saveAssistant(form: FormData) {
+  const time = (k: string, d: string) => (/^\d{2}:\d{2}$/.test(str(form, k) ?? "") ? str(form, k)! : d);
+  await db().from("settings").update({
+    assistant_name: (str(form, "assistant_name") ?? "Manager").slice(0, 24),
+    brief_time: time("brief_time", "07:30"),
+    quiet_start: time("quiet_start", "21:30"),
+    checkin_hours: Math.max(0, Math.min(12, Number(str(form, "checkin_hours") ?? 3))),
+    proactive: form.get("proactive") === "on",
+  }).eq("id", 1);
+  refresh();
+}
+
+export async function toggleWatch(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const { data } = await db().from("projects").select("watch").eq("id", id).single();
+  await db().from("projects").update({ watch: !data?.watch }).eq("id", id);
+  refresh();
+}
+
 export async function setAutonomy(form: FormData) {
   const v = str(form, "autonomy");
   if (v && ["ask", "balanced", "decide"].includes(v)) await db().from("settings").update({ autonomy: v }).eq("id", 1);

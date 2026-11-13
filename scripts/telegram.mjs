@@ -8,6 +8,8 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API = process.env.TELEGRAM_API ?? "https://api.telegram.org"; // overridable for tests
 const BASE = process.env.MANAGER_URL ?? "http://localhost:3000";
 const KEY = process.env.MANAGER_KEY ?? "";
+// Telegram only accepts public https links on buttons, so links are shown only when the app is online.
+const PUBLIC = /^https:\/\//.test(process.env.APP_URL ?? "") ? process.env.APP_URL.replace(/\/$/, "") : null;
 const STATE = process.env.TELEGRAM_STATE ?? path.join(process.cwd(), ".localdb", "telegram-state.json");
 if (!TOKEN) { console.log("No TELEGRAM_BOT_TOKEN, bot not started."); process.exit(0); }
 
@@ -47,7 +49,7 @@ async function notifyPending() {
     if (state.notified.includes(a.id)) continue;
     await tg("sendMessage", {
       chat_id: chatId, text: approvalText(a), parse_mode: "HTML",
-      reply_markup: { inline_keyboard: [[{ text: "✅ Approve", callback_data: `ap:${a.id}` }, { text: "✋ Deny", callback_data: `dn:${a.id}` }], [{ text: "Open Approvals", url: `${BASE}/approvals` }]] },
+      reply_markup: { inline_keyboard: [[{ text: "✅ Approve", callback_data: `ap:${a.id}` }, { text: "✋ Deny", callback_data: `dn:${a.id}` }], ...(PUBLIC ? [[{ text: "Open Approvals", url: `${PUBLIC}/approvals` }]] : [])] },
     }).catch((e) => console.log(`[bot] ${e.message}`));
     state.notified.push(a.id);
   }

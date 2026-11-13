@@ -34,10 +34,11 @@ const AUTONOMY: Record<string, string> = {
 };
 
 export async function systemPrompt() {
-  const { data } = await db().from("settings").select("autonomy").eq("id", 1).maybeSingle();
+  const { data } = await db().from("settings").select("autonomy,assistant_name").eq("id", 1).maybeSingle();
+  const name = (data?.assistant_name as string) || "Manager";
   const level = (data?.autonomy as string) ?? "balanced";
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Melbourne" });
-  return `${BASE_SYSTEM}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}`;
+  return `${BASE_SYSTEM.replace("You are Manager,", `You are ${name},`)}\n\nToday is ${today} (Melbourne).\n${AUTONOMY[level] ?? AUTONOMY.balanced}`;
 }
 
 /** claude-code = the Claude Code app on this PC (local mode); api = Claude API (needs ANTHROPIC_API_KEY; always on Vercel). */
@@ -51,9 +52,13 @@ let client: Anthropic | null = null;
 const anthropic = () => (client ??= new Anthropic());
 
 /** Runs (or continues) an agent conversation, emitting events as it goes and saving them to the DB. */
-export async function runAgent(goal: string, emit: (e: AgentEvent) => void, runId?: string) {
+export interface RunOpts { kind?: "chat" | "brief" | "checkin" | "job" }
+
+export async function runAgent(goal: string, rawEmit: (e: AgentEvent) => void, runId?: string, opts: RunOpts = {}) {
+  // keep working if the browser goes away mid-run (background jobs)
+  const emit = (e: AgentEvent) => { try { rawEmit(e); } catch { /* client gone */ } };
   const SYSTEM = await systemPrompt();
-  if (agentBackend() === "claude-code") return runClaudeCode(goal, SYSTEM, emit, runId);
+  if (agentBackend() === "claude-code") return runClaudeCode(goal, SYSTEM, emit, runId, opts.kind ?? "chat");
   let messages: Anthropic.Beta.BetaMessageParam[] = [];
   let events: AgentEvent[] = [];
   if (runId) {
@@ -62,7 +67,7 @@ export async function runAgent(goal: string, emit: (e: AgentEvent) => void, runI
     events = data.events;
     await db().from("agent_runs").update({ status: "running" }).eq("id", runId);
   } else {
-    const { data } = await db().from("agent_runs").insert({ goal }).select().single();
+    const { data } = await db().from("agent_runs").insert({ goal, kind: opts.kind ?? "chat" }).select().single();
     runId = data.id as string;
   }
   const send = (e: AgentEvent) => { events.push(e); emit(e); };

@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, Sparkles, TriangleAlert, Wrench } from "lucide-react";
+import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, TriangleAlert, Wrench } from "lucide-react";
 import type { AgentEvent } from "@/lib/agent/run";
 import { MicButton } from "./mic-button";
+import { Orb } from "./orb";
 import { Md } from "./md";
 
 const SUGGESTIONS = [
@@ -44,8 +45,8 @@ function toSteps(events: AgentEvent[]): Step[] {
   });
 }
 
-export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask }: {
-  initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string;
+export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, name = "Manager" }: {
+  initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string; name?: string;
 }) {
   const [events, setEvents] = useState<AgentEvent[]>(initialEvents);
   const [runId, setRunId] = useState(initialRunId);
@@ -105,10 +106,8 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
     <div className="flex min-h-[70dvh] flex-col">
       {empty ? (
         <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
-          <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#9a8bff] to-[#5ec8ff] shadow-[0_12px_30px_-8px_rgba(139,123,255,.8)]">
-            <Sparkles size={24} className="text-white" />
-          </div>
-          <h2 className="text-[22px] font-semibold tracking-tight">What can I do for you?</h2>
+          <div className="mb-5"><Orb size={64} /></div>
+          <h2 className="text-[22px] font-semibold tracking-tight">Hi, I&apos;m {name}. What can I do for you?</h2>
           <p className="mt-1 max-w-md text-[14px] text-muted">Ask a question or hand me a job. I plan it, do what I can (tasks, research, GitHub, decisions), and anything that costs money or acts as you goes to Approvals first.</p>
           <div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-2">
             {SUGGESTIONS.map((s) => (
@@ -152,8 +151,8 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
             ))}
             {(busy || running) && (
               <li className="relative flex items-center gap-2 text-[13px] text-muted">
-                <span className="absolute -left-[27px] top-0.5 grid h-[14px] w-[14px] place-items-center rounded-full border border-line2 bg-bg"><Loader2 size={9} className="animate-spin text-accent" /></span>
-                Working…
+                <span className="absolute -left-[28px] top-0"><Orb size={16} state="working" /></span>
+                {name} is working…
               </li>
             )}
           </ol>

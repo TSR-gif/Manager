@@ -102,3 +102,12 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - **Per-project starter tasks** from the research (migration 0005, idempotent): Day trader (check Alpaca AU, NautilusTrader, Alpha Vantage tile), Web Scrapers (Crawlee vs Crawl4AI, changedetection.io), NDIS Scanner (2026-27 Support Catalogue, PDF→Claude prototype, PRODA CSV spec), Clothing Brand (AU print-on-demand, sample tee), Altona (scope/price, log hours, invoicing).
 - Fixed: tasks due today were counted as overdue (UTC vs Melbourne date).
 - Web push deferred until the app is online over HTTPS (phone can't reach localhost); Telegram covers phone approvals now.
+
+**07:15–07:45 — "Like Claude Duet / OpenAI dots, but do more"**
+- Looked both up. Claude Duet (Anthropic, Oct 2026): proactive app that messages you first (morning brief, checks apps every few hours, pings only when needed), background jobs with a ping when done, one continuous thread, asks before send/pay/sign/delete. OpenAI dots (Sep 2026): always-on agents shown as animated dots; you name your primary dot; plan for teams of specialist dots.
+- **Proactive** (`src/lib/proactive.ts`, `/api/proactive`, migration 0006): the launcher ticks every 5 min. Morning brief at `brief_time` (07:30, skipped if Manager wasn't on before noon), check-ins every `checkin_hours` (3) until `quiet_start` (21:30). Check-ins answer exactly NOTHING when nothing needs him, so they stay silent. Anything worth saying goes to Telegram and a "From <name>" card on Today (unread until opened). Settings on the Assistant screen.
+- **Background jobs**: runs keep going if the browser closes; when he left before it finished, it's marked unread and he gets a "✅ Done" Telegram message.
+- **Name + orb**: the assistant has a name (default Manager, editable) and a live orb (breathes idle, spins while working) on Today, the Assistant screen and the chat.
+- **Specialists**: "+ Add a specialist" on any project page; watched projects are checked in every check-in.
+- Tested: automatic brief fired on its own ~1 min after start and was delivered to (mock) Telegram; forced check-in correctly stayed quiet right after the brief; job abandoned after 4 s finished in the background (idea added) and sent the Done message.
+- Fixed: Telegram rejects link buttons to localhost, so links only appear when APP_URL is a public https address.

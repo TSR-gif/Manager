@@ -29,6 +29,7 @@ export async function runClaudeCode(
   system: string,
   emit: (e: AgentEvent) => void,
   runId?: string,
+  kind = "chat",
 ): Promise<string> {
   let events: AgentEvent[] = [];
   let ccSession: string | null = null;
@@ -38,7 +39,7 @@ export async function runClaudeCode(
     ccSession = data.cc_session_id ?? null;
     await db().from("agent_runs").update({ status: "running" }).eq("id", runId);
   } else {
-    const { data } = await db().from("agent_runs").insert({ goal, backend: "claude-code" }).select().single();
+    const { data } = await db().from("agent_runs").insert({ goal, backend: "claude-code", kind }).select().single();
     runId = data.id as string;
   }
   const id = runId!;
