@@ -16,7 +16,7 @@ const block = (why) => {
   process.exit(2);
 };
 
-const SECRET = /(^|[\s"'=\\/])\.env($|[.\s"'])|\.env$|\.pem$|\.key$|secret|credential|_keys?\b|[\\/]\.ssh[\\/]|[\\/]\.aws[\\/]|access-token|login data|cookies$/i;
+const SECRET = /(^|[\s"'=\\/])\.env($|[.\s"'])|\.env$|\.pem$|\.key$|secret|credential|_keys?\b|[\\/]\.ssh[\\/]|[\\/]\.aws[\\/]|access-token|login data|cookies$|com\.vercel\.cli|[\\/](gh|github cli)[\\/]hosts\.yml/i; // CLI sign-ins (Vercel, GitHub) too
 
 const DESTRUCTIVE = [
   [/\b(rm|rmdir|del|erase|rd|unlink|shred|truncate)\b/, "deleting files"],
