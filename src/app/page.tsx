@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { ArrowRight, Bell, ChevronRight, Coffee, Flame, Lightbulb, ListTodo, MessageCircle, RefreshCcw, ShieldCheck, Sparkles, Timer, Wallet, X, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, Coffee, Flame, Lightbulb, ListTodo, RefreshCcw, ShieldCheck, Sparkles, Timer, Wallet, X, Zap } from "lucide-react";
 import { cookies } from "next/headers";
-import { addTask, dismissWelcome, endFocus, startFocus } from "./actions";
+import { addTask, decideAction, dismissWelcome, endFocus, setTaskStatus, startFocus, undoActivity } from "./actions";
 import { nextTasks, rankProjects } from "@/lib/focus";
 import { getActions, getActiveFocus, getIdeas, getProjects, getSettings, getTasks, todayStats } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
-import { Empty, ProjectAvatar, SignalChips, TZ, todayISO } from "@/components/ui";
+import { Empty, ProjectAvatar, SignalChips, TZ, ago, money as fmtMoney, todayISO } from "@/components/ui";
+import { kindOf } from "@/lib/action-registry";
 import { FocusTimer } from "@/components/focus-timer";
 import { TaskItem } from "@/components/task-item";
 import { OpenCommandButton } from "@/components/open-command";
@@ -30,29 +31,12 @@ function Nudge({ icon, text, href, tone }: { icon: React.ReactNode; text: React.
 }
 
 function Welcome({ name }: { name: string }) {
-  const steps: [React.ReactNode, string, string][] = [
-    [<MessageCircle key="a" size={17} />, "Just tell it what you need", `Type or tap the mic: "remind me to call the plumber Friday" or "what should I work on?"`],
-    [<ShieldCheck key="b" size={17} />, "It asks before anything risky", "Spending, signing up or sending emails as you always waits for your OK."],
-    [<Bell key="c" size={17} />, "Get it on your phone (optional)", "Two minutes in Settings and approvals arrive in Telegram."],
-  ];
   return (
-    <section className="hero relative">
-      <form action={dismissWelcome} className="absolute right-3 top-3"><button className="btn btn-ghost !h-9 !w-9 !p-0" aria-label="Close"><X size={16} /></button></form>
-      <div className="mb-1 text-[19px] font-semibold tracking-tight">Welcome to {name} 👋</div>
-      <p className="mb-4 pr-8 text-[14px] text-muted">Your projects, everyday tasks and money in one place, with an assistant that does the busywork. Three things to know:</p>
-      <ol className="grid gap-3 md:grid-cols-3">
-        {steps.map(([icon, t, d], i) => (
-          <li key={i} className="flex gap-3 rounded-xl border border-line bg-bg2/50 p-3">
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[rgba(139,123,255,.15)] text-accent">{icon}</div>
-            <div><div className="text-[14px] font-medium">{t}</div><div className="mt-0.5 text-[12.5px] text-muted">{d}</div></div>
-          </li>
-        ))}
-      </ol>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <form action={dismissWelcome}><button className="btn btn-primary !py-2.5">Got it</button></form>
-        <Link href="/settings#phone" className="btn !py-2.5">Set up phone alerts</Link>
-      </div>
-    </section>
+    <div className="flex items-center gap-2 rounded-xl border border-line bg-panel/60 px-3 py-2 text-[13px] text-muted">
+      <Sparkles size={14} className="shrink-0 text-accent" />
+      <span className="min-w-0 flex-1">New here? Just tell {name} what you need, typed or by mic. Anything risky waits for your OK.</span>
+      <form action={dismissWelcome}><button className="grid h-8 w-8 place-items-center rounded-lg hover:bg-panel2" aria-label="Dismiss"><X size={14} /></button></form>
+    </div>
   );
 }
 
@@ -71,7 +55,7 @@ export default async function Today() {
   const today = todayISO();
   const everydayToday = everyday.filter((t) => t.due && t.due.slice(0, 10) <= today || t.status === "doing");
   const everydayLater = everyday.filter((t) => !everydayToday.includes(t));
-  const name = (settings as { assistant_name?: string }).assistant_name || "Manager";
+  const name = (settings as { assistant_name?: string }).assistant_name || "MyManager";
   const { data: unreadRuns } = await db().from("agent_runs").select("id,kind,goal,summary,created_at").eq("unread", true).order("created_at", { ascending: false }).limit(3);
   const inboxRuns = (unreadRuns ?? []) as { id: string; kind: string; goal: string; summary: string | null; created_at: string }[];
   const reviewDue = !settings.last_review_at || Date.now() - new Date(settings.last_review_at).getTime() > 7 * 86_400_000;
@@ -81,21 +65,88 @@ export default async function Today() {
   const maxScore = Math.max(1, ...ranked.map((r) => r.score));
   const welcomed = (await cookies()).get("welcomed")?.value === "1";
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const nowTask = targetTasks[0];
+  const thenTasks = [...targetTasks.slice(1), ...everydayToday.filter((t) => t.id !== nowTask?.id)].slice(0, 3);
+  const off = new Intl.DateTimeFormat("en-AU", { timeZone: TZ, timeZoneName: "shortOffset" }).formatToParts(new Date()).find((x) => x.type === "timeZoneName")?.value.replace("GMT", "") || "+10";
+  const dayStart = new Date(`${today}T00:00:00${off.length <= 3 ? `${off}:00`.replace(/^([+-])(\d):/, "$10$2:") : off}`).toISOString();
+  const { data: actRows } = await db().from("activity").select("*").gte("created_at", dayStart).order("created_at", { ascending: false }).limit(20);
+  const activity = (actRows ?? []) as { id: string; title: string; undo: unknown; undone: boolean; created_at: string }[];
 
   return (
-    <div className="fade-in space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="label">{new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long", timeZone: TZ })}</div>
-          <h1 className="mt-1 text-[28px] font-semibold tracking-tight md:text-[32px]">{greeting}, Thomas</h1>
-          <p className="mt-1 text-[14px] text-muted">
-            {target ? <>Today&apos;s focus is <span className="text-text">{target.name}</span>{everydayToday.length ? <>, plus {plural(everydayToday.length, "everyday task")}.</> : "."}</> : "Pick a project to work on and I'll tell you what to do."}
-          </p>
-          {(stats.done > 0 || stats.focusMinutes > 0) && (
-            <p className="mt-1 text-[13px] text-faint">So far today: {plural(stats.done, "task")} done{stats.focusMinutes ? `, ${Math.floor(stats.focusMinutes / 60) ? `${Math.floor(stats.focusMinutes / 60)}h ` : ""}${stats.focusMinutes % 60}m focused` : ""}.</p>
-          )}
-        </div>
+    <div className="fade-in space-y-5">
+      <header>
+        <div className="label">{new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long", timeZone: TZ })}</div>
+        <h1 className="mt-1 text-[26px] font-semibold tracking-tight md:text-[32px]">{greeting}, Thomas</h1>
+        {(stats.done > 0 || stats.focusMinutes > 0) && (
+          <p className="mt-0.5 text-[13px] text-faint">So far today: {plural(stats.done, "thing")} done{stats.focusMinutes ? `, ${Math.floor(stats.focusMinutes / 60) ? `${Math.floor(stats.focusMinutes / 60)}h ` : ""}${stats.focusMinutes % 60}m focused` : ""}.</p>
+        )}
       </header>
+
+      {/* Waiting for your OK: pinned first, decided right here */}
+      {pending.length > 0 && (
+        <section className="space-y-2">
+          {pending.slice(0, 3).map((a) => (
+            <div key={a.id} className="card !border-[rgba(255,200,87,.4)] !p-4">
+              <div className="flex items-center gap-2 text-[12px] text-warn"><ShieldCheck size={14} /> Needs your OK · {kindOf(a.kind).label}{a.cost_cents > 0 && <b className="ml-auto text-text">{fmtMoney(a.cost_cents)}</b>}</div>
+              <div className="mt-1.5 text-[15px] font-medium">{a.title}</div>
+              {a.reason && <div className="mt-0.5 line-clamp-2 text-[13px] text-muted">{a.reason}</div>}
+              <div className="mt-3 flex gap-2">
+                <form action={decideAction.bind(null, a.id, true)} className="flex-1"><button className="btn btn-good w-full !min-h-11">Approve</button></form>
+                <form action={decideAction.bind(null, a.id, false)} className="flex-1"><button className="btn w-full !min-h-11">Not now</button></form>
+              </div>
+            </div>
+          ))}
+          {pending.length > 3 && <Link href="/approvals" className="block text-center text-[13px] text-accent">{pending.length - 3} more waiting</Link>}
+        </section>
+      )}
+
+      {/* DO THIS NOW: MyManager picks, so you don't have to */}
+      <section className="hero !p-4 md:!p-6">
+        {target ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="chip chip-accent">{focus ? <><Flame size={11} /> Focusing now</> : <><Zap size={11} /> Do this now</>}</span>
+              <Link href={`/projects/${target.id}`} className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted hover:text-text">
+                <ProjectAvatar name={target.name} size={18} /><span className="truncate">{target.name}</span>
+              </Link>
+              <span className="ml-auto hidden md:block"><SignalChips s={signals[target.id]} /></span>
+            </div>
+            <div className="mt-3 text-[20px] font-semibold leading-snug tracking-tight md:text-[24px]">
+              {nowTask?.title ?? target.next_action ?? `Decide the next step for ${target.name}`}
+            </div>
+            {targetScore && !focus && (
+              <div className="mt-1 text-[12.5px] text-faint">Picked because: {[target.next_action && nowTask ? "it's the next step" : null, ...targetScore.reasons.slice(1, 3).filter((x) => x !== "momentum" && !/no tasks/.test(x))].filter(Boolean).join(", ") || "it's your top priority"}</div>
+            )}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {focus ? (
+                <>
+                  <div className="mr-2"><FocusTimer startedAt={focus.started_at} minutes={focus.planned_minutes} /></div>
+                  <form action={endFocus}><input type="hidden" name="outcome" value="done" /><button className="btn btn-good !min-h-11 !px-5">Finished</button></form>
+                  <form action={endFocus}><input type="hidden" name="outcome" value="abandoned" /><button className="btn !min-h-11">Stop</button></form>
+                </>
+              ) : (
+                <>
+                  {nowTask && <form action={setTaskStatus.bind(null, nowTask.id, "done")}><button className="btn btn-good !min-h-11 !px-5"><CheckCircle2 size={16} /> Done</button></form>}
+                  <form action={startFocus}>
+                    <input type="hidden" name="project_id" value={target.id} />
+                    <input type="hidden" name="task_id" value={nowTask?.id ?? ""} />
+                    <input type="hidden" name="minutes" value={settings.focus_minutes} />
+                    <button className="btn btn-primary !min-h-11 !px-5"><Timer size={15} /> Start ({settings.focus_minutes} min)</button>
+                  </form>
+                </>
+              )}
+            </div>
+            {thenTasks.length > 0 && (
+              <div className="mt-5 border-t border-line pt-3">
+                <div className="label mb-1 px-2">Then</div>
+                <ul className="-mx-2">{thenTasks.map((t) => <TaskItem key={t.id} t={t} projectName={t.project_id ? projects.find((p) => p.id === t.project_id)?.name : undefined} compact />)}</ul>
+              </div>
+            )}
+          </>
+        ) : (
+          <Empty icon={<Sparkles size={18} />} title="Nothing to focus on yet" hint="Tell me the one thing you need to get done this week, and I'll put it here." />
+        )}
+      </section>
 
       {!welcomed && <Welcome name={name} />}
 
@@ -109,21 +160,37 @@ export default async function Today() {
               <div className="min-w-0 flex-1">
                 <div className="mb-1 flex items-center gap-2 text-[12px] text-muted">
                   <b className="text-text">{name}</b>
-                  <span>· {r.kind === "brief" ? "Morning brief" : r.kind === "checkin" ? "Checked in" : "Finished a job"}</span>
+                  <span>· {r.kind === "brief" ? "Morning catch-up" : r.kind === "checkin" ? "Checked in" : "Finished a job"}</span>
                   <span className="ml-auto text-faint">{new Date(r.created_at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: TZ })}</span>
                 </div>
-                <div className="line-clamp-4 text-[14px] leading-relaxed"><Md text={r.summary ?? r.goal} /></div>
+                <div className="line-clamp-3 text-[14px] leading-relaxed"><Md text={(r.summary ?? r.goal).split(/\n\s*\n/)[0]} /></div>
               </div>
             </Link>
           ))}
         </section>
       )}
 
-      {(pending.length > 0 || inbox.length > 0 || reviewDue) && (
+      {(inbox.length > 0 || reviewDue) && (
         <section className="grid gap-2 md:grid-cols-2">
-          {pending.length > 0 && <Nudge href="/approvals" tone="var(--warn)" icon={<ShieldCheck size={18} />} text={<><b>{plural(pending.length, "thing")}</b> waiting for your OK</>} />}
           {inbox.length > 0 && <Nudge href="/inbox" tone="var(--accent)" icon={<Lightbulb size={18} />} text={<><b>{plural(inbox.length, "idea")}</b> to sort</>} />}
           {reviewDue && <Nudge href="/review" tone="var(--accent-2)" icon={<RefreshCcw size={18} />} text={<>Weekly review is due <span className="text-muted">(10 min)</span></>} />}
+        </section>
+      )}
+
+      {activity.length > 0 && (
+        <section className="card">
+          <div className="mb-2 flex items-center gap-2"><Orb size={16} /><span className="font-semibold">What {name} did today</span><span className="text-[12px] text-faint">{activity.filter((a) => !a.undone).length}</span></div>
+          <ul className="divide-y divide-line text-[13.5px]">
+            {activity.slice(0, 8).map((a) => (
+              <li key={a.id} className="flex min-h-11 items-center gap-3 py-1.5">
+                <span className={`min-w-0 flex-1 truncate ${a.undone ? "text-faint line-through" : ""}`}>{a.title}</span>
+                <span className="shrink-0 text-[11.5px] text-faint">{ago(a.created_at)}</span>
+                {a.undo && !a.undone ? (
+                  <form action={undoActivity}><input type="hidden" name="id" value={a.id} /><button className="btn btn-ghost btn-sm !min-h-9">Undo</button></form>
+                ) : a.undone ? <span className="text-[12px] text-faint">undone</span> : null}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
@@ -135,78 +202,12 @@ export default async function Today() {
           </div>
           {money.error ? <span className="text-[13px] text-bad">{money.error}</span> : (
             <>
-              <div><div className="text-[12px] text-muted">Spent 7 days</div><div className="text-[15px] font-semibold tabular-nums">{dollars(money.spent7dCents)}</div></div>
-              <div><div className="text-[12px] text-muted">Spent 30 days</div><div className="text-[15px] font-semibold tabular-nums">{dollars(money.spent30dCents)}</div></div>
-              <div className="flex flex-wrap gap-1.5">{money.topCategories?.map((c) => <span key={c.name} className="chip">{c.name} {dollars(c.cents)}</span>)}</div>
+              <div><div className="text-[12px] text-muted">Spent this week</div><div className="text-[15px] font-semibold tabular-nums">{dollars(money.spent7dCents)}</div></div>
+              <div className="hidden sm:block"><div className="text-[12px] text-muted">Spent 30 days</div><div className="text-[15px] font-semibold tabular-nums">{dollars(money.spent30dCents)}</div></div>
             </>
           )}
         </section>
       )}
-
-      {/* THE ONE THING */}
-      <section className="hero">
-        {target ? (
-          <div className="flex flex-col gap-6 md:flex-row">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="chip chip-accent">{focus ? <><Flame size={11} /> Focusing now</> : <><Zap size={11} /> Work on this now</>}</span>
-                {targetScore && !focus && targetScore.reasons.slice(1, 4).filter((x) => x !== "momentum").map((r) => <span key={r} className="chip">{r}</span>)}
-              </div>
-              <Link href={`/projects/${target.id}`} className="mt-4 flex items-center gap-3">
-                <ProjectAvatar name={target.name} size={44} />
-                <div className="min-w-0">
-                  <div className="truncate text-[24px] font-semibold tracking-tight hover:underline md:text-[26px]">{target.name}</div>
-                  <SignalChips s={signals[target.id]} />
-                </div>
-              </Link>
-              {target.next_action && (
-                <div className="mt-4 flex items-start gap-2 rounded-xl border border-line bg-bg2/60 px-3 py-2.5 text-[14px]">
-                  <ArrowRight size={16} className="mt-0.5 shrink-0 text-accent" />
-                  <span><span className="text-muted">Next step: </span>{target.next_action}</span>
-                </div>
-              )}
-              <ul className="mt-3 -mx-2">
-                {targetTasks.map((t) => <TaskItem key={t.id} t={t} />)}
-              </ul>
-              <form action={addTask} className="mt-2 flex gap-2">
-                <input type="hidden" name="project_id" value={target.id} />
-                <input name="title" placeholder={`Add a task to ${target.name}…`} autoComplete="off" required />
-                <button className="btn">Add</button>
-              </form>
-            </div>
-
-            <div className="flex shrink-0 flex-row items-center justify-center gap-4 rounded-2xl border border-line bg-bg2/50 p-4 md:w-[220px] md:flex-col md:gap-3 md:p-5">
-              {focus ? (
-                <>
-                  <FocusTimer startedAt={focus.started_at} minutes={focus.planned_minutes} />
-                  <div className="flex w-full gap-2">
-                    <form action={endFocus} className="flex-1"><input type="hidden" name="outcome" value="done" /><button className="btn btn-good w-full">Finish</button></form>
-                    <form action={endFocus} className="flex-1"><input type="hidden" name="outcome" value="abandoned" /><button className="btn w-full">Stop</button></form>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="hidden h-[120px] w-[120px] place-items-center rounded-full border-[7px] border-line md:grid">
-                    <div className="text-center">
-                      <div className="font-mono text-[26px] font-semibold">{settings.focus_minutes}:00</div>
-                      <div className="text-[11px] text-muted">ready</div>
-                    </div>
-                  </div>
-                  <form action={startFocus} className="w-full">
-                    <input type="hidden" name="project_id" value={target.id} />
-                    <input type="hidden" name="task_id" value={targetTasks[0]?.id ?? ""} />
-                    <input type="hidden" name="minutes" value={settings.focus_minutes} />
-                    <button className="btn btn-primary w-full !py-3 md:!py-2.5"><Timer size={15} /> Focus for {settings.focus_minutes} min</button>
-                  </form>
-                  <div className="hidden text-center text-[11.5px] text-faint md:block">A timer to help you stick with this one thing</div>
-                </>
-              )}
-            </div>
-          </div>
-        ) : (
-          <Empty icon={<Sparkles size={18} />} title="Nothing to focus on yet" hint="Open Projects and set one to Active." />
-        )}
-      </section>
 
       <div className="grid gap-5 lg:grid-cols-[1.15fr_1fr]">
         <section className="card">
@@ -214,7 +215,7 @@ export default async function Today() {
             <div className="flex items-center gap-2"><ListTodo size={16} className="text-accent" /><span className="font-semibold">Everyday tasks</span></div>
             <OpenCommandButton className="btn btn-ghost btn-sm"><span className="hidden md:inline">Add</span><span className="kbd hidden md:inline">Ctrl K</span><span className="md:hidden">+ Add</span></OpenCommandButton>
           </div>
-          {everyday.length === 0 && <Empty icon={<Coffee size={18} />} title="Nothing on your plate" hint="Errands, calls and reminders go here. Tap + Add, or just tell the assistant." />}
+          {everyday.length === 0 && <Empty icon={<Coffee size={18} />} title="Nothing on your plate" hint="Errands, calls and reminders go here. Tap Add, or just tell the assistant." />}
           {everydayToday.length > 0 && (
             <>
               <div className="label mb-1 mt-3 px-2">Today</div>
@@ -224,8 +225,15 @@ export default async function Today() {
           {everydayLater.length > 0 && (
             <>
               <div className="label mb-1 mt-3 px-2">Later</div>
-              <ul className="-mx-2">{everydayLater.slice(0, 8).map((t) => <TaskItem key={t.id} t={t} compact />)}</ul>
+              <ul className="-mx-2">{everydayLater.slice(0, 6).map((t) => <TaskItem key={t.id} t={t} compact />)}</ul>
             </>
+          )}
+          {target && (
+            <form action={addTask} className="mt-3 hidden gap-2 md:flex">
+              <input type="hidden" name="project_id" value={target.id} />
+              <input name="title" placeholder={`Add a task to ${target.name}…`} autoComplete="off" required />
+              <button className="btn">Add</button>
+            </form>
           )}
         </section>
 
@@ -237,7 +245,7 @@ export default async function Today() {
           <ul className="space-y-1">
             {upNext.map((r) => (
               <li key={r.project.id}>
-                <Link href={`/projects/${r.project.id}`} className="flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-panel2/70">
+                <Link href={`/projects/${r.project.id}`} className="flex min-h-11 items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-panel2/70">
                   <ProjectAvatar name={r.project.name} size={30} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[14px] font-medium">{r.project.name}</div>
@@ -252,7 +260,6 @@ export default async function Today() {
           </ul>
         </section>
       </div>
-
     </div>
   );
 }

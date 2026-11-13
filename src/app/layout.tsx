@@ -4,6 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Nav } from "@/components/nav";
 import { CommandBar } from "@/components/command-bar";
+import { UsageLog } from "@/components/usage-log";
 import { db } from "@/lib/db";
 
 export const metadata: Metadata = {
@@ -31,7 +32,7 @@ async function pendingCount() {
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const pending = await pendingCount();
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en-AU" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="min-h-dvh antialiased">
         <Nav pending={pending} />
         <main className="mx-auto max-w-[1100px] px-4 pb-32 pt-5 md:pb-12 md:pl-[17rem] md:pr-8 md:pt-8"
@@ -39,6 +40,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           {children}
         </main>
         <CommandBar />
+        <UsageLog />
         <script
           dangerouslySetInnerHTML={{
             __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}`,

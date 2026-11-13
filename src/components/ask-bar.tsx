@@ -6,9 +6,9 @@ import { Orb } from "./orb";
 import { MicButton } from "./mic-button";
 
 const RITUALS = [
-  { icon: Sun, label: "Catch me up", prompt: "Give me my morning brief: what's due or overdue today, the one project I should work on and why, anything waiting for my approval, and anything stale. Then suggest a realistic plan for today (max 5 things) and add any missing tasks." },
-  { icon: Target, label: "Plan my day", prompt: "Plan my day. Look at my everyday tasks and top projects, pick a finite list I can actually finish today, set due dates to today for those, and tell me the order to do them in." },
-  { icon: Moon, label: "Wrap up my day", prompt: "Run my end-of-day shutdown: what did I finish today, what carried over, move unfinished today items to tomorrow, and tell me the first thing to do tomorrow morning." },
+  { icon: Sun, label: "Catch me up", prompt: "Catch me up. Lead with the one thing to do first and why, in one line. Then at most 5 things in order, and anything waiting for my OK. Don't count overdue tasks at me: fold them in or ask if I still want them. End with \"OK with this plan?\" Short enough to read on a phone." },
+  { icon: Target, label: "Plan my day", prompt: "Plan my day. Pick at most 5 things I can actually finish today from my everyday tasks and top projects, in the order to do them, one line each. Then ask \"OK?\". Only when I reply OK, set those due today. Short enough to read on a phone." },
+  { icon: Moon, label: "Wrap up my day", prompt: "Wrap up my day. Start with one line: how many things I finished today. Then list each unfinished task that was due today or earlier, numbered, and ask when I will do each one: tomorrow, a day I pick, or drop it. I can answer in one message like \"1 tomorrow, 2 Friday, 3 drop\". Don't move anything until I answer. Never make me feel bad about it. End with: Tomorrow starts with <the first thing>." },
 ];
 
 /** "Ask anything" box on Today: hands the request straight to the assistant. */

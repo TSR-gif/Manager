@@ -30,6 +30,18 @@ export default async function Review() {
   const stalled = active.filter((p) => Date.now() - new Date(p.last_touched_at).getTime() > 7 * 86_400_000);
   const byProject = (id: string | null) => done.filter((t) => t.project_id === id).length;
   const maxDone = Math.max(1, ...active.map((p) => byProject(p.id)), byProject(null));
+  const { data: usageRows } = await db().from("usage_events").select("path,device,seconds").gte("created_at", since);
+  const SCREEN: Record<string, string> = { "/": "Today", "/agent": "Assistant", "/projects": "Projects", "/money": "Money", "/approvals": "Approvals", "/inbox": "Ideas", "/review": "Weekly review", "/me": "About you", "/settings": "Settings", "/more": "More" };
+  const screenOf = (path: string) => SCREEN["/" + (path.split("/")[1] ?? "")] ?? "Other";
+  const usage = new Map<string, { phone: number; desktop: number; secs: number }>();
+  for (const u of (usageRows ?? []) as { path: string; device: string; seconds: number }[]) {
+    const k = screenOf(u.path);
+    const e = usage.get(k) ?? { phone: 0, desktop: 0, secs: 0 };
+    if (u.device === "phone") e.phone++; else e.desktop++;
+    e.secs += u.seconds ?? 0;
+    usage.set(k, e);
+  }
+  const usageList = [...usage.entries()].sort((x, y) => y[1].phone + y[1].desktop - (x[1].phone + x[1].desktop));
 
   return (
     <div className="fade-in space-y-6">
@@ -97,6 +109,21 @@ export default async function Review() {
       </Step>
 
       <form action={completeReview}><button className="btn btn-primary w-full !py-3">Finish review</button></form>
+      {usageList.length > 0 && (
+        <section className="card">
+          <div className="mb-1 font-semibold">How you used MyManager this week</div>
+          <p className="mb-3 text-[12.5px] text-muted">Only kept on this PC. Ask the assistant &quot;what should change based on how I use you?&quot; and it will suggest tweaks, never make them without asking.</p>
+          <ul className="space-y-1.5 text-[13.5px]">
+            {usageList.map(([k, v]) => (
+              <li key={k} className="flex items-center gap-3">
+                <span className="w-32 truncate">{k}</span>
+                <span className="text-muted">{v.phone} on phone · {v.desktop} on computer</span>
+                <span className="ml-auto text-[12px] text-faint">{Math.round(v.secs / 60)} min</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

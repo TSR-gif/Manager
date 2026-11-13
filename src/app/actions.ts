@@ -260,13 +260,14 @@ export async function unpairPhone() {
 
 export async function saveAssistant(form: FormData) {
   const time = (k: string, d: string) => (/^\d{2}:\d{2}$/.test(str(form, k) ?? "") ? str(form, k)! : d);
-  await db().from("settings").update({
+  const patch: Record<string, unknown> = {
     assistant_name: (str(form, "assistant_name") ?? "MyManager").slice(0, 24),
     brief_time: time("brief_time", "07:30"),
-    quiet_start: time("quiet_start", "21:30"),
-    checkin_hours: Math.max(0, Math.min(12, Number(str(form, "checkin_hours") ?? 3))),
-    proactive: form.get("proactive") === "on",
-  }).eq("id", 1);
+    quiet_start: time("quiet_start", "21:00"),
+  };
+  if (form.has("checkin_hours")) patch.checkin_hours = Math.max(0, Math.min(12, Number(str(form, "checkin_hours") ?? 3)));
+  if (form.has("proactive_present")) patch.proactive = form.get("proactive") === "on";
+  await db().from("settings").update(patch).eq("id", 1);
   refresh();
 }
 
@@ -458,4 +459,41 @@ export async function disconnectGithub() {
   setLocalEnv("GITHUB_TOKEN", "");
   refresh();
   back("ok=github-off#code");
+}
+
+// ---------- undo what the assistant did ----------
+const UNDO_TABLES = new Set(["tasks", "projects", "memories", "time_entries", "subscriptions", "ideas"]);
+export async function undoActivity(form: FormData) {
+  const id = str(form, "id");
+  if (!id) return;
+  const { data: a } = await db().from("activity").select("*").eq("id", id).maybeSingle();
+  const u = a?.undo as { op?: string; table?: string; id?: string; values?: Record<string, unknown> } | null;
+  if (!a || a.undone || !u?.table || !u.id || !UNDO_TABLES.has(u.table)) return;
+  if (u.op === "delete") await db().from(u.table).delete().eq("id", u.id);
+  else if (u.op === "update" && u.values) await db().from(u.table).update(u.values).eq("id", u.id);
+  await db().from("activity").update({ undone: true }).eq("id", id);
+  refresh();
+}
+
+/** Private usage log: which screens, how long. Never leaves this PC's database. */
+export async function logUsage(path: string, seconds: number, device: string) {
+  if (!path || path.startsWith("/login") || !(seconds >= 0)) return;
+  await db().from("usage_events").insert({ path: path.slice(0, 120), seconds: Math.min(3600, Math.round(seconds)), device: device === "phone" ? "phone" : "desktop" });
+}
+
+export async function setMessageMode(form: FormData) {
+  const m = str(form, "mode");
+  if (!m || !["needed", "daily", "more"].includes(m)) return;
+  await db().from("settings").update({ message_mode: m, proactive: true, checkin_hours: m === "daily" ? 0 : 3 }).eq("id", 1);
+  refresh();
+}
+
+export async function pauseProjects(form: FormData) {
+  const ids = form.getAll("id").map(String).filter(Boolean).slice(0, 20);
+  for (const id of ids) {
+    await db().from("projects").update({ status: "paused" }).eq("id", id);
+    const { data } = await db().from("projects").select("name").eq("id", id).maybeSingle();
+    await db().from("activity").insert({ title: `Paused ${data?.name ?? "a project"} (you said yes)`, undo: { op: "update", table: "projects", id, values: { status: "active" } } });
+  }
+  refresh();
 }

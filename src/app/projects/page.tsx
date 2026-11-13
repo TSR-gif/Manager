@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ArrowRight, Plus, TriangleAlert } from "lucide-react";
+import { ArrowRight, Plus } from "lucide-react";
+import { pauseProjects } from "@/app/actions";
 import { getProjects, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
 import { rankProjects } from "@/lib/focus";
@@ -23,6 +24,7 @@ export default async function Projects() {
   const rank = new Map(ranked.map((r, i) => [r.project.id, i]));
   const active = projects.filter((p) => p.status === "active").length;
   const over = active > settings.max_active_projects;
+  const toPause = projects.filter((p) => p.status === "active").sort((a, b) => (rank.get(b.id) ?? 99) - (rank.get(a.id) ?? 99)).slice(0, Math.max(0, active - settings.max_active_projects));
 
   return (
     <div className="fade-in space-y-7">
@@ -31,17 +33,18 @@ export default async function Projects() {
           <h1 className="text-[28px] font-semibold tracking-tight">Projects</h1>
           <p className="mt-1 text-[14px] text-muted">Ranked by what needs you most. {projects.length} total.</p>
         </div>
-        <Link href="/projects/new" className="btn btn-primary"><Plus size={16} /> New project</Link>
+        <Link href="/projects/new" className="btn"><Plus size={16} /> New project</Link>
       </header>
 
       {over && (
-        <div className="card flex items-start gap-3 !border-[rgba(255,200,87,.35)] !bg-[rgba(255,200,87,.06)]">
-          <TriangleAlert size={18} className="mt-0.5 shrink-0 text-warn" />
-          <div className="text-[14px]">
-            <div className="font-medium">You&apos;re spread across {active} active projects (your limit is {settings.max_active_projects}).</div>
-            <div className="text-muted">Pause the ones that don&apos;t need you this week so the Today screen can keep you on the right thing.</div>
+        <form action={pauseProjects} className="card flex flex-col gap-3 !border-[rgba(255,200,87,.35)] !bg-[rgba(255,200,87,.06)] sm:flex-row sm:items-center">
+          {toPause.map((p) => <input key={p.id} type="hidden" name="id" value={p.id} />)}
+          <div className="min-w-0 flex-1 text-[14px]">
+            <div className="font-medium">Pause {toPause.map((p) => p.name).join(", ")} for now?</div>
+            <div className="text-muted">You&apos;ve got {active} on the go (you said {settings.max_active_projects} is your limit). These need you least this week. You can switch them back any time.</div>
           </div>
-        </div>
+          <button className="btn btn-primary shrink-0 !min-h-11">Yes, pause {toPause.length === 1 ? "it" : `these ${toPause.length}`}</button>
+        </form>
       )}
 
       {SECTIONS.map(({ status, title, hint }) => {

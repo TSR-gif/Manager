@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 interface RunRow { id: string; goal: string; status: string; created_at: string; kind?: string; unread?: boolean; events?: AgentEvent[] }
 
 const KIND_LABEL: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in" };
-const AUTONOMY_LABEL: Record<string, string> = { ask: "Asks you first", balanced: "Balanced", decide: "Decides for you" };
+const AUTONOMY_LABEL: Record<string, string> = { ask: "Asks you first", balanced: "Does small things itself", decide: "Decides for you" };
 
 export default async function AgentPage({ searchParams }: { searchParams: Promise<{ run?: string; ask?: string; voice?: string }> }) {
   const { run, ask, voice } = await searchParams;
@@ -47,7 +47,7 @@ export default async function AgentPage({ searchParams }: { searchParams: Promis
         </header>
         <Link href="/settings" className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted hover:text-text">
           <span className="chip">{AUTONOMY_LABEL[autonomy] ?? "Balanced"}</span>
-          <span>{s.proactive ? `Messages you first at ${s.brief_time ?? "07:30"}` : "Only replies when you ask"}</span>
+          <span>{!s.proactive ? "Only replies when you ask" : (s as { message_mode?: string }).message_mode === "needed" ? "Messages you only when needed" : (s as { message_mode?: string }).message_mode === "more" ? "Catch-up and check-ins" : `Morning catch-up at ${s.brief_time ?? "07:30"}`}</span>
           <span className="text-accent">Change</span>
         </Link>
         {needsKey && (

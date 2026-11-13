@@ -20,7 +20,24 @@ const nowParts = () => {
 
 let running = false;
 
-export const BRIEF_PROMPT = "Give me my morning brief: what's due or overdue today, the one project I should work on and why, anything waiting for my approval, money if you can see it, and anything stale. Then suggest a realistic plan for today (max 5 things) and add any missing tasks. Keep it short enough to read on a phone.";
+const TIPS = [
+  "Tap the mic and just say what you need. I'll read the answer back.",
+  "Ask \"how's my Day trader going?\" and I'll go and look at the code, tasks and site.",
+  "Type + and a task anywhere (or in Telegram) to add it in two seconds.",
+  "Approvals can be done straight from Telegram, no need to open the app.",
+  "Say \"wrap up my day\" tonight and I'll help you decide what moves to tomorrow.",
+  "Everything I do shows under \"What MyManager did today\" with an Undo.",
+  "The About you page is what I know about you. Fix anything that's wrong.",
+  "Client hours go on the Money page, and I can turn them into an invoice.",
+  "Mark a project \"Keep an eye on this\" and I'll tell you when it slips.",
+  "Settings → How often can MyManager message me? Change it any time.",
+];
+
+export function briefPrompt(dayNumber = 99) {
+  const tip = dayNumber >= 1 && dayNumber <= TIPS.length ? `\nEnd with one line starting "Tip:" followed by: ${TIPS[dayNumber - 1]}` : "";
+  return `Give me my morning catch-up. Lead with the one thing to do first today and why, in one line. Then a plan of at most 5 things in order, and anything waiting for my OK. Mention money only if something needs attention. Don't lead with or count overdue tasks: fold anything from earlier days into the plan or ask "still want these?". Add any missing tasks. End with "OK with this plan? Reply OK and I'll set it up." Keep it short enough to read on a phone in 15 seconds.${tip}`;
+}
+export const BRIEF_PROMPT = briefPrompt();
 
 async function checkinPrompt() {
   const { data: watched } = await db().from("projects").select("name,goal,next_action").eq("watch", true);
@@ -50,10 +67,11 @@ export async function tick(force?: "brief" | "checkin") {
   const { date, time } = nowParts();
   const awake = time >= (s.brief_time ?? "07:30") && time < (s.quiet_start ?? "21:30");
   let due: "brief" | "checkin" | null = force ?? null;
+  const mode = (s.message_mode as string) ?? "daily"; // needed | daily | more
   if (!due && s.proactive) {
-    // brief once a day; if Manager wasn't running in the morning, skip it and just check in later
-    if (s.last_brief_date !== date && awake && time < "12:00") due = "brief";
-    else if (awake && s.checkin_hours > 0 &&
+    // brief once a day; if MyManager wasn't running in the morning, skip it and just check in later
+    if (mode !== "needed" && s.last_brief_date !== date && awake && time < "12:00") due = "brief";
+    else if (mode !== "daily" && awake && s.checkin_hours > 0 &&
       (!s.last_checkin_at || Date.now() - new Date(s.last_checkin_at).getTime() >= s.checkin_hours * 3600_000)) due = "checkin";
   }
   if (!due) return { skipped: "nothing due" };
@@ -63,7 +81,8 @@ export async function tick(force?: "brief" | "checkin") {
     await db().from("settings").update(due === "brief"
       ? { last_brief_date: date, last_checkin_at: new Date().toISOString() }
       : { last_checkin_at: new Date().toISOString() }).eq("id", 1);
-    return await run(due, due === "brief" ? BRIEF_PROMPT : await checkinPrompt());
+    const dayNumber = s.first_seen ? Math.floor((new Date(date).getTime() - new Date(String(s.first_seen).slice(0, 10)).getTime()) / 86_400_000) + 1 : 99;
+    return await run(due, due === "brief" ? briefPrompt(dayNumber) : await checkinPrompt());
   } finally {
     running = false;
   }

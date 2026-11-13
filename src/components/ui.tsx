@@ -24,7 +24,8 @@ export function dueInfo(due: string | null): { text: string; tone: "bad" | "warn
   const d = due.slice(0, 10);
   const today = todayISO();
   const diff = Math.round((new Date(d).getTime() - new Date(today).getTime()) / 86_400_000);
-  if (diff < 0) return { text: diff === -1 ? "Yesterday" : `${-diff}d overdue`, tone: "bad" };
+  // No guilt: a missed date reads as "from Tue", not a red "5d overdue". The evening wrap-up asks if it's still wanted.
+  if (diff < 0) return { text: diff === -1 ? "From yesterday" : `From ${new Date(d).toLocaleDateString("en-AU", diff > -7 ? { weekday: "short" } : { day: "numeric", month: "short" })}`, tone: "warn" };
   if (diff === 0) return { text: "Today", tone: "warn" };
   if (diff === 1) return { text: "Tomorrow", tone: "muted" };
   if (diff < 7) return { text: new Date(d).toLocaleDateString("en-AU", { weekday: "short" }), tone: "muted" };
@@ -75,8 +76,11 @@ export function StatusDot({ status }: { status: string }) {
 
 export function PriorityBadge({ p }: { p: number }) {
   const cls = p === 1 ? "chip-bad" : p === 2 ? "chip-warn" : p === 3 ? "chip-accent" : "";
-  return <span className={`chip ${cls}`}>P{p}</span>;
+  return <span className={`chip ${cls}`}>{priorityLabel(p)}</span>;
 }
+
+/** Plain words instead of P1–P5. */
+export const priorityLabel = (p: number) => (p === 1 ? "Top priority" : p === 2 ? "High" : p === 3 ? "Normal" : p === 4 ? "Low" : "Someday");
 
 export function SignalChips({ s }: { s?: Signals }) {
   if (!s) return null;

@@ -1,4 +1,4 @@
-// Telegram bot for Manager: one-tap Approve/Deny on your phone, quick capture, and asking the assistant.
+// Telegram bot for MyManager: one-tap Approve/Deny on your phone, quick capture, and asking the assistant.
 // Started by scripts/local.mjs when TELEGRAM_BOT_TOKEN is set. Uses long polling, so no public URL is needed.
 // Pairing: message the bot "/start <pair code>" (code shown in MyManager (Settings, Alerts on your phone)). Only that chat is obeyed.
 import fs from "node:fs";
@@ -39,7 +39,7 @@ const money = (c) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]);
 
 function approvalText(a) {
-  return `🛡 <b>Approval needed</b>\n${esc(a.title)}\n<i>${esc(a.kind)}${a.cost_cents ? ` · ${money(a.cost_cents)}` : ""} · from ${esc(a.requested_by)}</i>${a.reason ? `\n${esc(a.reason)}` : ""}`;
+  return `🛡 <b>Approval needed</b>\n${esc(a.title)}\n<i>${a.cost_cents ? `${money(a.cost_cents)} · ` : ""}asked by ${a.requested_by === "agent" ? "MyManager" : "you"}</i>${a.reason ? `\n${esc(a.reason)}` : ""}`;
 }
 
 async function notifyPending() {
@@ -134,7 +134,7 @@ async function onCallback(q) {
   const [act, id] = String(q.data).split(":");
   try {
     const r = await mgr("decide", { id, approve: act === "ap" });
-    const label = act === "ap" ? (r?.status === "executed" ? "✅ Approved and done" : r?.status === "failed" ? "⚠️ Approved but it failed" : "✅ Approved") : "✋ Denied";
+    const label = act === "ap" ? (r?.status === "executed" ? "✅ Approved and done" : r?.status === "failed" ? "⚠️ Approved but it failed" : "✅ Approved") + ` by you at ${new Date().toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: "Australia/Melbourne" })}` : `✋ Denied by you at ${new Date().toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: "Australia/Melbourne" })}`;
     await tg("editMessageText", { chat_id: chatId, message_id: q.message.message_id, text: `${esc(q.message.text)}\n\n<b>${label}</b>`, parse_mode: "HTML" });
     await tg("answerCallbackQuery", { callback_query_id: q.id, text: label });
   } catch (e) {

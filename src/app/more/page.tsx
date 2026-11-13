@@ -1,13 +1,14 @@
 import Link from "next/link";
-import { ChevronRight, Lightbulb, RefreshCcw, Settings, ShieldCheck, UserRound } from "lucide-react";
-import { getActions, getIdeas } from "@/lib/queries";
+import { ChevronRight, FolderKanban, Lightbulb, RefreshCcw, Settings, UserRound, Wallet } from "lucide-react";
+import { getIdeas } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function More() {
-  const [pending, ideas] = await Promise.all([getActions(["pending"]), getIdeas("inbox")]);
+  const ideas = await getIdeas("inbox");
   const rows = [
-    { href: "/approvals", icon: ShieldCheck, title: "Approvals", sub: "Things waiting for your OK, and a record of everything done", badge: pending.length },
+    { href: "/projects", icon: FolderKanban, title: "Projects", sub: "Every project, how it's going and what's next" },
+    { href: "/money", icon: Wallet, title: "Money", sub: "What you're owed, hours, subscriptions" },
     { href: "/inbox", icon: Lightbulb, title: "Ideas", sub: "Ideas you've jotted down, ready to sort", badge: ideas.length },
     { href: "/review", icon: RefreshCcw, title: "Weekly review", sub: "10 minutes to reset your priorities" },
     { href: "/me", icon: UserRound, title: "About you", sub: "What your assistant knows about you" },

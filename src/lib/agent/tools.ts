@@ -136,6 +136,11 @@ export const AGENT_TOOLS: Tool[] = [
   },
 ];
 
+/** Records what the assistant did, with how to undo it, for "What MyManager did today". */
+async function did(title: string, undo: Record<string, unknown> | null) {
+  try { await db().from("activity").insert({ title, undo }); } catch {}
+}
+
 async function findProject(name: string | null): Promise<Project | null> {
   if (!name) return null;
   const projects: Project[] = unwrap(await db().from("projects").select("*"));
@@ -159,11 +164,18 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           db().from("actions").select("title,kind,cost_cents").eq("status", "pending"),
         ]);
         const money = await getMoney();
+        const { data: usage } = await db().from("usage_events").select("path,device,seconds").gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString()).limit(2000);
+        const usageSummary: Record<string, { phone: number; desktop: number }> = {};
+        for (const u of (usage ?? []) as { path: string; device: string }[]) {
+          const k = "/" + (u.path.split("/")[1] ?? "");
+          usageSummary[k] ??= { phone: 0, desktop: 0 };
+          usageSummary[k][u.device === "phone" ? "phone" : "desktop"]++;
+        }
         const names = new Map((projects.data ?? []).map((p: { id: string; name: string }) => [p.id, p.name] as const));
         const t = (tasks.data ?? []).map((x: Pick<Task, "id" | "title" | "status" | "priority" | "due" | "project_id">) => ({ ...x, project: x.project_id ? names.get(x.project_id) : "everyday", project_id: undefined }));
         return {
           label: "Read your projects and tasks",
-          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}) }),
+          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.data, open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary }),
         };
       }
       case "inspect_project": {
@@ -179,10 +191,13 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           title: input.title, project_id: p?.id ?? null, due: input.due ?? null, priority: input.priority ?? 3,
         }).select());
         if (p) await db().from("projects").update({ last_touched_at: new Date().toISOString() }).eq("id", p.id);
+        await did(`Added task “${input.title}”${p ? ` to ${p.name}` : ""}`, { op: "delete", table: "tasks", id: row.id });
         return { label: `Added task “${input.title}”${p ? ` to ${p.name}` : ""}`, result: `Created task ${row.id}` };
       }
       case "complete_task": {
+        const { data: before } = await db().from("tasks").select("status").eq("id", input.task_id).maybeSingle();
         const [row] = unwrap(await db().from("tasks").update({ status: "done", done_at: new Date().toISOString() }).eq("id", input.task_id).select());
+        if (row) await did(`Ticked off “${row.title}”`, { op: "update", table: "tasks", id: row.id, values: { status: before?.status ?? "todo", done_at: null } });
         return { label: `Completed “${row?.title ?? "task"}”`, result: row ? "Done" : "Task not found" };
       }
       case "update_project": {
@@ -190,14 +205,18 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
         const patch: Record<string, unknown> = {};
         for (const k of ["next_action", "goal", "priority", "status", "deadline"]) if (input[k] !== null && input[k] !== undefined) patch[k] = input[k];
+        const prev: Record<string, unknown> = {};
+        for (const k of Object.keys(patch)) prev[k] = (p as unknown as Record<string, unknown>)[k] ?? null;
         patch.last_touched_at = new Date().toISOString();
         await db().from("projects").update(patch).eq("id", p.id);
+        if (Object.keys(prev).length) await did(`Changed ${p.name}: ${Object.keys(prev).map((k) => k.replace("_", " ")).join(", ")}`, { op: "update", table: "projects", id: p.id, values: prev });
         return { label: `Updated ${p.name}`, result: `Updated ${Object.keys(patch).filter((k) => k !== "last_touched_at").join(", ") || "nothing"}` };
       }
       case "remember": {
         const fact = String(input.fact ?? "").slice(0, 500);
         if (/\b\d{13,19}\b|password|passcode|cvv/i.test(fact)) return { label: "Didn't save that", result: "Refused: looks like a secret. Never store passwords or card numbers.", isError: true };
-        await db().from("memories").insert({ fact, category: input.category ?? "general", source: "assistant" });
+        const [m] = unwrap(await db().from("memories").insert({ fact, category: input.category ?? "general", source: "assistant" }).select());
+        await did(`Remembered: ${fact.slice(0, 80)}`, m ? { op: "delete", table: "memories", id: m.id } : null);
         return { label: `Remembered: ${fact.slice(0, 60)}`, result: "Saved. Thomas can see it on the About you page." };
       }
       case "log_time": {
@@ -205,19 +224,22 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         if (!p) return { label: "Couldn't find project", result: `No project matches "${input.project_name}".`, isError: true };
         const minutes = Math.round(Number(input.hours) * 60);
         if (!(minutes > 0)) return { label: "No hours given", result: "Hours must be more than 0.", isError: true };
-        await db().from("time_entries").insert({ project_id: p.id, minutes, note: input.note ?? null, ...(input.date ? { worked_on: input.date } : {}) });
+        const [te] = unwrap(await db().from("time_entries").insert({ project_id: p.id, minutes, note: input.note ?? null, ...(input.date ? { worked_on: input.date } : {}) }).select());
+        await did(`Logged ${Number(input.hours)}h on ${p.name}`, te ? { op: "delete", table: "time_entries", id: te.id } : null);
         return { label: `Logged ${Number(input.hours)}h on ${p.name}`, result: "Logged. It shows on the Money page and goes on the next invoice." };
       }
       case "track_subscription": {
         const p = input.project_name ? await findProject(input.project_name as string) : null;
-        await db().from("subscriptions").insert({
+        const [sub] = unwrap(await db().from("subscriptions").insert({
           name: input.name, amount_cents: Math.round(Number(input.amount_dollars) * 100), cycle: input.cycle,
           project_id: p?.id ?? null, next_renewal: input.next_renewal ?? null,
-        });
+        }).select());
+        await did(`Started tracking ${input.name}`, sub ? { op: "delete", table: "subscriptions", id: sub.id } : null);
         return { label: `Tracking ${input.name}`, result: "Added to Money → Subscriptions." };
       }
       case "add_idea": {
-        await db().from("ideas").insert({ text: input.text });
+        const [idea] = unwrap(await db().from("ideas").insert({ text: input.text }).select());
+        await did(`Saved idea: ${String(input.text).slice(0, 80)}`, idea ? { op: "delete", table: "ideas", id: idea.id } : null);
         return { label: "Saved an idea to your inbox", result: "Saved" };
       }
       case "create_github_issue": {

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { usePathname } from "next/navigation";
-import { CornerDownLeft, Hash, Lightbulb, ListTodo, Plus } from "lucide-react";
+import { CornerDownLeft, Hash, Lightbulb, ListTodo } from "lucide-react";
 import { quickCapture } from "@/app/actions";
 
 /** Ctrl/Cmd+K anywhere (or the + button on phone) to capture a task or idea. */
@@ -43,13 +43,7 @@ export function CommandBar() {
 
   return (
     <>
-      {!path.startsWith("/agent") && <button
-        onClick={() => setOpen(true)}
-        aria-label="Quick capture"
-        className="fixed right-4 z-30 grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-[#9a8bff] to-[#7363ff] text-white shadow-[0_12px_30px_-8px_rgba(139,123,255,.8)] active:scale-95 md:hidden"
-        style={{ bottom: "calc(env(safe-area-inset-bottom) + 76px)" }}>
-        <Plus size={22} />
-      </button>}
+
 
       {flash && (
         <div className="fade-in fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-full border border-line2 bg-panel3 px-4 py-2 text-sm shadow-xl">

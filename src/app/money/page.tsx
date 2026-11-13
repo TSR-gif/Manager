@@ -55,6 +55,19 @@ export default async function MoneyPage() {
           : <Tile icon={<Wallet size={19} />} label={up.configured ? "Bank" : "Connect your bank"} value={up.configured ? "—" : "Set up"} hint={up.configured ? up.error : "Up only, read only"} tone="var(--accent)" href="/settings#bank" />}
       </div>
 
+      {/* the action next to the number */}
+      {jobs.some((j) => j.unbilledCents > 0) && (
+        <div className="flex flex-wrap gap-2">
+          {jobs.filter((j) => j.unbilledCents > 0).map((j) => (
+            <form key={j.project.id} action={createInvoice}>
+              <input type="hidden" name="project_id" value={j.project.id} />
+              <button className="btn btn-primary !min-h-11">Make invoice for {j.project.name} ({$(j.unbilledCents)})</button>
+            </form>
+          ))}
+          <span className="self-center text-[12px] text-faint">Makes a draft from the hours logged. Nothing is sent until you mark it sent.</span>
+        </div>
+      )}
+
       {/* ---------- client jobs ---------- */}
       <section>
         <div className="mb-3 flex items-baseline gap-2"><h2 className="text-[15px] font-semibold">Client jobs</h2><span className="text-[13px] text-faint">{jobs.length}</span></div>

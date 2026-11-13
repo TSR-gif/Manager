@@ -5,17 +5,18 @@ import { CalendarCheck, FolderKanban, Lightbulb, ShieldCheck, RefreshCcw, Plus, 
 
 const items = [
   { href: "/", label: "Today", icon: CalendarCheck },
-  { href: "/agent", label: "Assistant", icon: Sparkles },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/money", label: "Money", icon: Wallet },
-  { href: "/approvals", label: "Approvals", icon: ShieldCheck, desktopOnly: true },
+  { href: "/agent", label: "Assistant", phoneLabel: "Ask", icon: Sparkles },
+  { href: "#add", label: "Add", icon: Plus, phoneOnly: true },
+  { href: "/projects", label: "Projects", icon: FolderKanban, desktopOnly: true },
+  { href: "/money", label: "Money", icon: Wallet, desktopOnly: true },
+  { href: "/approvals", label: "Approvals", icon: ShieldCheck },
   { href: "/inbox", label: "Ideas", icon: Lightbulb, desktopOnly: true },
   { href: "/review", label: "Weekly review", icon: RefreshCcw, desktopOnly: true },
   { href: "/me", label: "About you", icon: UserRound, desktopOnly: true },
   { href: "/settings", label: "Settings", icon: Settings, desktopOnly: true },
   { href: "/more", label: "More", icon: Menu, phoneOnly: true },
 ];
-const MORE = ["/more", "/approvals", "/inbox", "/review", "/me", "/settings"];
+const MORE = ["/more", "/projects", "/money", "/inbox", "/review", "/me", "/settings"];
 
 export function Nav({ pending = 0 }: { pending?: number }) {
   const path = usePathname();
@@ -53,21 +54,28 @@ export function Nav({ pending = 0 }: { pending?: number }) {
         <div className="mt-auto px-2 text-[11px] text-faint">Nothing risky happens without your OK</div>
       </aside>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg2/85 backdrop-blur-xl md:hidden"
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg2 md:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div className="grid grid-cols-5">
           {items.filter((i) => !i.desktopOnly).map((i) => {
+            if (i.href === "#add") return (
+              <button key="add" type="button" onClick={() => window.dispatchEvent(new Event("open-command"))} aria-label="Quick add"
+                className="flex min-h-[60px] flex-col items-center justify-center gap-1 text-[11px] font-medium text-faint">
+                <span className="-mt-[15px] grid h-9 w-11 place-items-center rounded-xl bg-gradient-to-br from-[#9a8bff] to-[#7363ff] text-white shadow-[0_8px_20px_-8px_rgba(139,123,255,.9)]"><Plus size={20} /></span>
+                Add
+              </button>
+            );
             const on = i.href === "/more" ? MORE.some((m) => path.startsWith(m)) : active(i.href);
             return (
-              <Link key={i.href} href={i.href} className={`relative flex flex-col items-center gap-1 pb-2 pt-2.5 text-[11px] font-medium min-h-[56px] ${on ? "text-text" : "text-faint"}`}>
+              <Link key={i.href} href={i.href} className={`relative flex min-h-[60px] flex-col items-center justify-center gap-1 text-[11px] font-medium ${on ? "text-text" : "text-faint"}`}>
                 {on && <span className="absolute top-0 h-[2px] w-8 rounded-full bg-accent" />}
                 <span className="relative">
                   <i.icon size={21} className={on ? "text-accent" : ""} />
-                  {i.href === "/more" && pending > 0 && (
-                    <span className="absolute -right-2 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold text-white">{pending}</span>
+                  {i.href === "/approvals" && pending > 0 && (
+                    <span className="absolute -right-2.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-warn px-1 text-[10px] font-bold text-black">{pending}</span>
                   )}
                 </span>
-                {i.label}
+                {i.phoneLabel ?? i.label}
               </Link>
             );
           })}

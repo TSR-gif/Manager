@@ -1,5 +1,5 @@
 import { Bell, Bot, CheckCircle2, Code2, ExternalLink, Landmark, Send, ShieldCheck, Sparkles, Timer } from "lucide-react";
-import { connectGithub, connectTelegram, connectUp, disconnectGithub, disconnectTelegram, disconnectUp, saveAssistant, saveSettings, setAutonomy, unpairPhone } from "@/app/actions";
+import { setMessageMode, connectGithub, connectTelegram, connectUp, disconnectGithub, disconnectTelegram, disconnectUp, saveAssistant, saveSettings, setAutonomy, unpairPhone } from "@/app/actions";
 import { sessionToken } from "@/lib/auth";
 import { isLocal } from "@/lib/local-env";
 import { githubAccess } from "@/lib/inspect";
@@ -52,6 +52,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const s = settings as typeof settings & { assistant_name?: string; autonomy?: string; proactive?: boolean; brief_time?: string; checkin_hours?: number; quiet_start?: string; telegram_chat_id?: string | null; telegram_bot_name?: string | null; trust_after?: number };
   const name = s.assistant_name || "MyManager";
   const autonomy = s.autonomy ?? "balanced";
+  const mode = (s as { message_mode?: string }).message_mode ?? "daily";
   const local = isLocal();
   const botOn = !!process.env.TELEGRAM_BOT_TOKEN;
   const paired = !!s.telegram_chat_id;
@@ -72,7 +73,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <div className={`card !py-3 text-[14px] ${flash[1] === "good" ? "!border-[rgba(52,211,153,.4)] text-good" : "!border-[rgba(248,113,113,.4)] text-bad"}`}>{flash[0]}</div>
       )}
 
-      <Section icon={<Sparkles size={19} />} title="Your assistant" sub="Its name, how much it decides on its own, and when it messages you.">
+      <Section icon={<Sparkles size={19} />} title="Your assistant" sub="How much it decides on its own, and how often it messages you.">
         <form action={setAutonomy} className="mb-5">
           <div className="mb-2 text-[13.5px] font-medium">How much can {name} decide on its own?</div>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -89,20 +90,28 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             ))}
           </div>
         </form>
-        <form action={saveAssistant} className="grid gap-4 sm:grid-cols-2">
-          <label className="space-y-1.5 sm:col-span-2"><span className="text-[13.5px] font-medium">Name</span><input name="assistant_name" defaultValue={name} maxLength={24} /></label>
-          <label className="flex items-center gap-3 rounded-xl border border-line bg-panel px-3 py-3 sm:col-span-2">
-            <input type="checkbox" name="proactive" defaultChecked={!!s.proactive} className="!h-5 !w-5 shrink-0" />
-            <span><span className="block text-[14px] font-medium">Let {name} message me first</span><span className="text-[12.5px] text-muted">A morning catch-up, plus a short check-in only when something needs you.</span></span>
-          </label>
+        <form action={setMessageMode} className="mb-5">
+          <div className="mb-2 text-[13.5px] font-medium">How often can {name} message you?</div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {([
+              ["needed", "Only when needed", "Stays quiet unless something needs you."],
+              ["daily", "Once a day", "A short morning catch-up. Recommended."],
+              ["more", "More often", "Morning catch-up plus check-ins during the day."],
+            ] as const).map(([v, l, d]) => (
+              <button key={v} name="mode" value={v}
+                className={`rounded-xl border p-3 text-left transition ${mode === v ? "border-[rgba(139,123,255,.6)] bg-[rgba(139,123,255,.12)]" : "border-line bg-panel hover:border-line2"}`}>
+                <div className="flex items-center gap-1.5 text-[14px] font-medium">{mode === v && <CheckCircle2 size={15} className="text-accent" />}{l}</div>
+                <div className="mt-1 text-[12.5px] text-muted">{d}</div>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[12px] text-faint">Approvals and answers you asked for always come through.</p>
+        </form>
+        <form action={saveAssistant} className="grid gap-4 sm:grid-cols-3">
+          <label className="space-y-1.5"><span className="text-[13.5px] font-medium">Name</span><input name="assistant_name" defaultValue={name} maxLength={24} /></label>
           <label className="space-y-1.5"><span className="text-[13.5px] font-medium">Morning catch-up at</span><input name="brief_time" type="time" defaultValue={s.brief_time ?? "07:30"} /></label>
-          <label className="space-y-1.5"><span className="text-[13.5px] font-medium">Check in every</span>
-            <select name="checkin_hours" defaultValue={String(s.checkin_hours ?? 3)}>
-              <option value="0">Never</option><option value="1">1 hour</option><option value="2">2 hours</option><option value="3">3 hours</option><option value="4">4 hours</option><option value="6">6 hours</option>
-            </select>
-          </label>
-          <label className="space-y-1.5"><span className="text-[13.5px] font-medium">Stay quiet after</span><input name="quiet_start" type="time" defaultValue={s.quiet_start ?? "21:30"} /></label>
-          <div className="flex items-end"><button className="btn btn-primary w-full !py-2.5">Save</button></div>
+          <label className="space-y-1.5"><span className="text-[13.5px] font-medium">Quiet from</span><input name="quiet_start" type="time" defaultValue={s.quiet_start ?? "21:00"} /></label>
+          <div className="sm:col-span-3"><button className="btn btn-primary w-full !py-2.5">Save</button></div>
         </form>
       </Section>
 

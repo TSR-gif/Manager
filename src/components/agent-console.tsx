@@ -22,7 +22,31 @@ type Step =
   | { kind: "tool"; id: string; label: string; done: boolean; isError?: boolean; approval?: boolean }
   | { kind: "search"; query: string }
   | { kind: "done"; text: string }
-  | { kind: "error"; text: string };
+  | { kind: "error"; text: string }
+  | { kind: "group"; items: Step[] };
+
+/** Once a turn is finished, fold its working steps into one "what I did" line so the answer comes first. */
+function foldSteps(steps: Step[], finished: boolean): Step[] {
+  if (!finished) return steps;
+  const out: Step[] = [];
+  let buf: Step[] = [];
+  for (const s of steps) {
+    if (s.kind === "tool" || s.kind === "search" || s.kind === "thinking") { buf.push(s); continue; }
+    if (s.kind === "done" && buf.length) out.push({ kind: "group", items: buf });
+    else out.push(...buf);
+    buf = [];
+    out.push(s);
+  }
+  return [...out, ...buf];
+}
+
+/** Answer first: the opening paragraph, with the rest behind "Show details" when it's long. */
+function splitAnswer(text: string): [string, string] {
+  const t = text.trim();
+  const i = t.indexOf("\n\n");
+  if (t.length < 450 || i < 0) return [t, ""];
+  return [t.slice(0, i), t.slice(i + 2)];
+}
 
 function toSteps(events: AgentEvent[]): Step[] {
   const steps: Step[] = [];
@@ -103,7 +127,9 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
     }
   }
 
-  const steps = toSteps(events);
+  const finished = !(busy || running);
+  const steps = foldSteps(toSteps(events), finished);
+  const lastDone = steps.map((x) => x.kind).lastIndexOf("done");
   const empty = !goal && steps.length === 0;
 
   return (
@@ -120,7 +146,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
           </div>
         </div>
       ) : (
-        <div className="flex-1 space-y-3 pb-6">
+        <div className="flex-1 space-y-3 pb-28 md:pb-24">
           {goal && (
             <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-panel3 px-4 py-2.5 text-[14.5px]">{goal}</div>
           )}
@@ -147,15 +173,36 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                     {s.approval && s.done && !s.isError && <Link href="/approvals" className="ml-1 text-accent">review →</Link>}
                   </div>
                 )}
-                {s.kind === "done" && (
+                {s.kind === "group" && (
+                  <details className="group text-[13px] text-muted">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5"><Check size={13} className="text-good" /> {s.items.filter((x) => x.kind !== "thinking").map((x) => (x.kind === "tool" ? x.label : x.kind === "search" ? "Searched the web" : "")).filter(Boolean).slice(0, 2).join(" · ") || "Worked it out"}{s.items.length > 2 ? ` +${s.items.length - 2}` : ""} <span className="text-faint group-open:hidden">· show</span></summary>
+                    <ul className="mt-1.5 space-y-1 pl-5">
+                      {s.items.map((x, j) => <li key={j} className={x.kind === "tool" && x.isError ? "text-bad" : ""}>{x.kind === "tool" ? x.label : x.kind === "search" ? `Searched the web for “${x.query}”` : "Thought it through"}</li>)}
+                    </ul>
+                  </details>
+                )}
+                {s.kind === "done" && (() => { const [lead, more] = splitAnswer(s.text); return (
                   <div className="hero !p-4">
-                    <Md text={s.text} className="text-[14.5px] leading-relaxed" />
+                    <Md text={lead} className="text-[15px] leading-relaxed" />
+                    {more && (
+                      <details className="group mt-2">
+                        <summary className="cursor-pointer list-none text-[13px] text-accent group-open:hidden">Show details</summary>
+                        <Md text={more} className="text-[14.5px] leading-relaxed" />
+                      </details>
+                    )}
+                    {i === lastDone && finished && /\?\s*$/.test(s.text) && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {["Yes, go ahead", "Not now"].map((q) => (
+                          <button key={q} type="button" onClick={() => send(q)} className="btn !min-h-10 !px-4">{q}</button>
+                        ))}
+                      </div>
+                    )}
                     <button type="button" onClick={() => (speaking === i ? (stopSpeaking(), setSpeaking(null)) : say(s.text, i))}
                       className="mt-3 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-line px-3 text-[12.5px] text-muted hover:text-text">
                       {speaking === i ? <><Square size={12} /> Stop</> : <><Volume2 size={14} /> Read aloud</>}
                     </button>
                   </div>
-                )}
+                ); })()}
                 {s.kind === "error" && <div className="flex items-start gap-1.5 text-[13.5px] text-bad"><TriangleAlert size={14} className="mt-0.5" />{s.text}</div>}
               </li>
             ))}

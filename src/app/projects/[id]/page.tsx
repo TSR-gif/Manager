@@ -5,7 +5,7 @@ import { addTask, requestAction, saveProject, toggleWatch } from "@/app/actions"
 import { Orb } from "@/components/orb";
 import { getActions, getProject, getSettings, getTasks } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
-import { Empty, PriorityBadge, ProjectAvatar, SignalChips, StatusDot, ago } from "@/components/ui";
+import { Empty, PriorityBadge, ProjectAvatar, priorityLabel, SignalChips, StatusDot, ago } from "@/components/ui";
 import { TaskItem } from "@/components/task-item";
 import type { Project } from "@/lib/types";
 import { doneByDay, projectHealth } from "@/lib/health";
@@ -52,13 +52,14 @@ export default async function ProjectPage({
     .reduce((m, f) => m + Math.min(f.planned_minutes * 2, Math.round(((f.ended_at ? new Date(f.ended_at).getTime() : Date.now()) - new Date(f.started_at).getTime()) / 60000)), 0);
   const loggedMin = ((timeQ.data ?? []) as { minutes: number }[]).reduce((m, t) => m + t.minutes, 0);
   const subCost = ((subsQ.data ?? []) as { amount_cents: number; cycle: "monthly" | "yearly" | "weekly" }[]).reduce((c, x) => c + monthlyCents(x), 0);
-  const stats: [string, string][] = [
+  const statsAll: [string, string][] = [
     ["Open tasks", String(open.length)],
-    ["Done, 14 days", String(done14)],
-    ["Focus, 14 days", `${Math.floor(focusMin / 60)}h ${focusMin % 60}m`],
+    ["Done in 2 weeks", String(done14)],
+    ["Focused in 2 weeks", `${Math.floor(focusMin / 60)}h ${focusMin % 60}m`],
     ...(p.kind === "client" ? [["Hours logged", `${Math.floor(loggedMin / 60)}h${loggedMin % 60 ? ` ${loggedMin % 60}m` : ""}`] as [string, string]] : []),
-    ...(subCost ? [["Costs / month", `$${(subCost / 100).toFixed(0)}`] as [string, string]] : []),
+    ...(subCost ? [["Costs a month", `$${(subCost / 100).toFixed(0)}`] as [string, string]] : []),
   ];
+  const shownStats = statsAll.filter(([k, v]) => k === "Open tasks" || !/^0(h 0m)?$/.test(v));
 
   return (
     <div className="fade-in space-y-6">
@@ -80,8 +81,8 @@ export default async function ProjectPage({
               <form action={toggleWatch} className="inline">
                 <input type="hidden" name="id" value={p.id} />
                 <button className={`chip cursor-pointer transition hover:border-accent ${(p as { watch?: boolean }).watch ? "chip-accent" : ""}`}
-                  title="A specialist checks this project in every check-in and tells you when it slips">
-                  {(p as { watch?: boolean }).watch ? <><Orb size={10} /> Specialist watching</> : "+ Add a specialist"}
+                  title="MyManager checks this project regularly and tells you when it slips">
+                  {(p as { watch?: boolean }).watch ? <><Orb size={10} /> Keeping an eye on it</> : "+ Keep an eye on this"}
                 </button>
               </form>
             </div>
@@ -97,22 +98,11 @@ export default async function ProjectPage({
         <div className="hero !p-4 text-[15px]"><span className="label mr-2">Goal</span>{p.goal}</div>
       )}
 
-      {!isNew && health && (
-        <section className="card grid gap-4 !p-4 md:grid-cols-[1fr_220px] md:items-center">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="min-w-[9rem]">
-              <HealthChip h={health} />
-              <div className="mt-1.5 text-[12px] text-muted">{health.reasons.length ? health.reasons.join(" · ") : health.level === "idle" ? "Not active" : "Nothing needs you here"}</div>
-            </div>
-            {stats.map(([k, v]) => (
-              <div key={k}><div className="text-[18px] font-semibold tabular-nums leading-none">{v}</div><div className="mt-1 text-[11.5px] text-muted">{k}</div></div>
-            ))}
-          </div>
-          <div>
-            <DoneBars data={bars} />
-            <div className="mt-1 flex justify-between text-[10.5px] text-faint"><span>14 days ago</span><span>today</span></div>
-          </div>
-        </section>
+      {!isNew && health && health.level !== "idle" && (
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+          <HealthChip h={health} />
+          <span>{health.reasons.length ? health.reasons.join(" · ") : "Nothing needs you here"}</span>
+        </div>
       )}
 
       {cap && (
@@ -198,7 +188,7 @@ export default async function ProjectPage({
             </Field>
             <Field label="Priority">
               <select name="priority" defaultValue={p.priority}>
-                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>P{x}{x === 1 ? " · top" : x === 5 ? " · someday" : ""}</option>)}
+                {[1, 2, 3, 4, 5].map((x) => <option key={x} value={x}>{priorityLabel(x)}</option>)}
               </select>
             </Field>
           </div>
@@ -214,6 +204,22 @@ export default async function ProjectPage({
           <button className="btn btn-primary w-full">{isNew ? "Create project" : "Save changes"}</button>
         </form>
       </div>
+
+      {!isNew && (shownStats.length > 1 || done14 > 0) && (
+        <section className="card grid gap-4 !p-4 md:grid-cols-[1fr_220px] md:items-center">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            {shownStats.map(([k, v]) => (
+              <div key={k}><div className="text-[18px] font-semibold tabular-nums leading-none">{v}</div><div className="mt-1 text-[11.5px] text-muted">{k}</div></div>
+            ))}
+          </div>
+          {done14 > 0 && (
+            <div>
+              <DoneBars data={bars} />
+              <div className="mt-1 flex justify-between text-[10.5px] text-faint"><span>2 weeks ago</span><span>today</span></div>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

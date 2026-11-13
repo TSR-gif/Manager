@@ -136,3 +136,18 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - **Voice**: ask by mic and the answer is read aloud (browser voice, Australian English when available); every answer has a Read aloud button.
 - The assistant now writes for a person, not a developer: dates in words, no file names or jargon.
 - Before/after screenshots: `manager/screenshots-before/` and `manager/screenshots/`.
+
+**10:45–11:30 — Designed around how people really use apps** (research: `manager/research/mymanager-user-behaviour.md`)
+- **Phone Today answers "what now?" in 15 seconds**: waiting approvals pinned at the top with Approve / Not now right there; then one **Do this now** card picked by MyManager (with "Picked because…"), big Done and Start buttons, and the next 3 under "Then". The welcome is one dismissible line. Ask bar comes after.
+- **Phone tabs = phone jobs**: Today · Ask · Add · Approvals (badge) · More (Projects, Money, Ideas, Weekly review, About you, Settings). The floating + is gone, so nothing covers buttons; the bottom bar is solid.
+- **Answers first**: assistant replies open with the answer and the one next step; details sit behind "Show details"; the working steps fold into one line; replies that end in a question get "Yes, go ahead" / "Not now" buttons; nothing hides behind the input box.
+- **No guilt**: missed dates read "From Tue", not a red "5d overdue". Morning catch-up leads with the one thing to do and asks "OK with this plan?"; Wrap up my day asks when each unfinished thing will happen (tomorrow / a day / drop) and changes nothing until he answers. A tip a day in the morning catch-up for the first 10 days.
+- **"How often can MyManager message you?"**: Only when needed / Once a day (default) / More often. Quiet from 9 pm by default. Approvals and requested answers always come through.
+- **What MyManager did today** on Today, each line with **Undo** (added tasks, ticked tasks, project changes, saved ideas, memories, logged hours, subscriptions, pauses). Tested: Undo removed a saved memory.
+- **Plain words**: priorities are Top priority / High / Normal / Low / Someday (no P1–P5); "Keep an eye on this" instead of "specialist"; Australian dates (`en-AU`).
+- **Project page**: tasks first; stats only when there's something to show. **Projects**: "Pause these 4 for now?" with one Yes button instead of a warning.
+- **Money**: "Make invoice for Altona ($440)" next to the number (makes a draft, nothing is sent).
+- **Telegram approvals** read as self-contained cards and update to "Approved by you at 9:14 pm".
+- **Private usage log** (`usage_events`): which screens, phone or computer, how long. Shown in the weekly review and given to the assistant so it can suggest changes (always asks first).
+- Launcher restarts the Telegram bot by itself if it drops.
+- Phone overflow check passes on every main screen. Before/after screenshots in project files.

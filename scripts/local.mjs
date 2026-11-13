@@ -87,7 +87,12 @@ const syncBot = () => {
   if (t === botToken) return;
   botToken = t;
   if (bot) { bot.kill(); bot = null; }
-  if (t) bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { TELEGRAM_BOT_TOKEN: t, MANAGER_URL: "http://localhost:3000", MANAGER_KEY: managerKey } });
+  if (t) {
+    bot = run(process.execPath, [path.join(ROOT, "scripts", "telegram.mjs")], "bot", { optional: true, env: { TELEGRAM_BOT_TOKEN: t, MANAGER_URL: "http://localhost:3000", MANAGER_KEY: managerKey } });
+    // if it stops (no internet, Telegram down), try again on a later check
+    const me = bot;
+    me.on("exit", () => { if (bot === me) bot = null; setTimeout(() => { if (botToken === t) botToken = ""; }, 20_000); });
+  }
 };
 setTimeout(() => { syncBot(); setInterval(syncBot, 10_000); }, 8000);
 

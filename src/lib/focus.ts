@@ -20,7 +20,7 @@ export function scoreProject(
 ): Scored {
   const reasons: string[] = [];
   let score = (6 - p.priority) * 20; // P1 = 100, P5 = 20
-  reasons.push(`P${p.priority}`);
+  reasons.push(p.priority <= 2 ? "high priority" : `priority ${p.priority}`);
 
   if (p.deadline) {
     const days = Math.ceil((new Date(p.deadline).getTime() - now) / DAY);
