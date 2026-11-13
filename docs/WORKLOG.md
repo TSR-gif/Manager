@@ -85,3 +85,5 @@ Running log of everything built, decided and waiting on Thomas. Newest entries a
 - setup.sql regenerated with 0003 (project files copy).
 
 **Research** — Thomas asked if external research is happening. Honest answer: only two searches early on. A dedicated research pass was done in a separate thread: `/mnt/project-files/manager/research/manager-ideas-apps-tools.md` (~30 apps, tools, 16 ranked ideas). Top picks: morning brief on the phone, one-tap phone approvals with a trust ladder, accessibility-tree PC control (agent-desktop / windows-computer-use-mcp) before screenshot clicking, Playwright MCP for web signups, payments stop at the pay step for Thomas to use a disposable card (US agent-card products don't work in AU).
+- **Morning brief / Plan my day / Shutdown** one-tap buttons under the ask bar (research top pick #1, Sunsama-style ritual). Tested for real on phone size: brief read his data, added 5 concrete tasks, picked Manager as the focus with a reason, gave a 5-item plan.
+- Next up from research: phone push for approvals + trust ladder, accessibility-tree PC helper, payments stop at the pay step.
