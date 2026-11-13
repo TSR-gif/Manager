@@ -235,3 +235,59 @@ test("a backup can be brought back, and restoring never overwrites the current d
     assert.equal((await r.json()).length, 1);
   } finally { restored.p.kill(); }
 });
+
+// ---------- the coders' sandbox (lib/sandbox.ts) ----------
+const sbEval = (code, env = {}) => spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--conditions=react-server", "--input-type=module", "-e", code], { cwd: ROOT, env: { ...process.env, ...env }, encoding: "utf8" });
+const has = (t) => spawnSync("bash", ["-lc", `command -v ${t}`]).status === 0;
+
+test("Windows paths map to WSL paths", () => {
+  const r = sbEval(`import { toWsl } from "./src/lib/sandbox.ts"; console.log(JSON.stringify([toWsl("C:\\\\Users\\\\x\\\\proj"), toWsl("d:/a/b"), toWsl("/home/x")]));`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), ["/mnt/c/Users/x/proj", "/mnt/d/a/b", "/home/x"]);
+});
+
+test("a switched-on sandbox that isn't working refuses to run anything", () => {
+  const r = sbEval(`import { checkLaunch, claudeLaunch } from "./src/lib/sandbox.ts";
+    console.log(JSON.stringify([await checkLaunch("npm test", process.cwd()), await claudeLaunch({ workDir: process.cwd(), tag: "t", args: ["-p"] })]));`,
+    { CODER_SANDBOX: "native", PATH: path.dirname(process.execPath) + ":/usr/bin/nonexistent", HOME: os.tmpdir() });
+  assert.equal(r.status, 0, r.stderr);
+  const [check, coder] = JSON.parse(r.stdout);
+  assert.ok(check.problem && !check.cmd, JSON.stringify(check));
+  assert.ok(coder.problem && !coder.cmd, JSON.stringify(coder));
+});
+
+test("in WSL mode a worktree's git link is made relative so Linux git can follow it", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mm-link-"));
+  const wt = path.join(dir, "wt");
+  fs.mkdirSync(wt);
+  fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(dir, "repo", ".git", "worktrees", "wt")}\n`);
+  const r = sbEval(`import { relativeGitLink } from "./src/lib/sandbox.ts"; console.log(JSON.stringify(relativeGitLink(${JSON.stringify(wt)})));`, { CODER_SANDBOX: "wsl" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout), null);
+  assert.equal(fs.readFileSync(path.join(wt, ".git"), "utf8"), "gitdir: ../repo/.git/worktrees/wt\n");
+});
+
+test("a sandboxed check can't read home, write outside its copy or reach other sites, but can commit", { skip: !(has("bwrap") && has("srt") && has("socat")) && "bwrap, socat and srt aren't installed here" }, () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "mm-home-"));
+  fs.writeFileSync(path.join(home, "fake-credential.txt"), "SYNTHETIC_SECRET");
+  const repo = path.join(home, "proj");
+  const g = (cwd, ...a) => spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd, encoding: "utf8" });
+  fs.mkdirSync(repo); g(repo, "init", "-q"); fs.writeFileSync(path.join(repo, "a.txt"), "x"); g(repo, "add", "a.txt"); g(repo, "commit", "-qm", "init");
+  const wt = path.join(home, ".mymanager", "worktrees", "t1");
+  g(repo, "worktree", "add", "-q", "-b", "mymanager/t1", wt);
+  const cmd = `cat ${path.join(home, "fake-credential.txt")}; echo hi > ${path.join(home, "outside.txt")}; echo ok > inside.txt; git -c user.email=t@t -c user.name=t commit -q --allow-empty -m sandboxed && echo COMMITTED; curl -sS -m 5 https://example.com -o /dev/null && echo NET_OPEN; true`;
+  const r = sbEval(`import { checkLaunch } from "./src/lib/sandbox.ts"; import { spawnSync } from "node:child_process";
+    const how = await checkLaunch(${JSON.stringify(cmd)}, ${JSON.stringify(wt)});
+    if ("problem" in how) { console.log(JSON.stringify(how)); process.exit(0); }
+    const out = spawnSync(how.cmd, how.args, { cwd: ${JSON.stringify(wt)}, env: how.env, encoding: "utf8" });
+    console.log(JSON.stringify({ out: out.stdout + out.stderr }));`, { CODER_SANDBOX: "native", HOME: home });
+  assert.equal(r.status, 0, r.stderr);
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.problem, undefined, res.problem);
+  assert.doesNotMatch(res.out, /SYNTHETIC_SECRET/);
+  assert.doesNotMatch(res.out, /NET_OPEN/);
+  assert.match(res.out, /COMMITTED/);
+  assert.equal(fs.existsSync(path.join(home, "outside.txt")), false);
+  assert.equal(fs.readFileSync(path.join(wt, "inside.txt"), "utf8"), "ok\n");
+  assert.match(g(repo, "log", "--oneline", "mymanager/t1").stdout, /sandboxed/);
+});

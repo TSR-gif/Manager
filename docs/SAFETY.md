@@ -13,8 +13,18 @@ Thomas's rule: nothing destructive without his permission, enforced by the app; 
 - **Coding.** A coder only ever works in its own git worktree (`~/.mymanager/worktrees/<id>`); if one can't be made, nothing runs and Thomas is asked. Stop ends a running coder and everything it started. A loop only finishes when its check passes on new commits and the reviewer approves that exact commit; a push approval is for one exact commit and is refused if the branch moved.
 - **Honest endings.** A job MyManager started records its exit code (`scripts/job-runner.mjs`), so after a restart it still knows whether it finished. A job that vanished without one is reported as interrupted, and a watched program that's no longer running is reported as "can't confirm", never as done. A mission can only be marked done when all its steps are done and no coder is working.
 
-## A check, not a sandbox
-`scripts/guard.mjs` runs before every tool call in every Claude session MyManager starts. It blocks deleting, overwriting what git can't restore, history rewrites, pushes, uninstalls, killing programs, settings changes, inline code (`node -e`, `python -c`), reading environment variables, calling MyManager's own app or database, and writing outside the work folder (links and junctions are followed). It reads the command text, so a program the coder writes and then runs (for example a test script) is not contained by it. On Windows, Claude Code's own sandbox needs WSL2. Real containment needs one of: WSL2 with the sandbox turned on, a separate Windows user account for the coder, or running coders in the cloud. That's Thomas's call (it installs software or changes accounts).
+## The guard, and the sandbox
+`scripts/guard.mjs` runs before every tool call in every Claude session MyManager starts. It blocks deleting, overwriting what git can't restore, history rewrites, pushes, uninstalls, killing programs, settings changes, inline code (`node -e`, `python -c`), reading environment variables, calling MyManager's own app or database, and writing outside the work folder (links and junctions are followed). It reads the command text, so on its own it can't contain a program the coder writes and then runs (for example a test script).
+
+That's what the sandbox is for (`src/lib/sandbox.ts`). With `CODER_SANDBOX=wsl` in `.env.local`, coders, reviewers and loop checks run inside the Ubuntu WSL distro (`CODER_SANDBOX_DISTRO`, default `Ubuntu`) under Claude Code's sandbox, and checks under Anthropic's sandbox runner (`srt`), with the same walls:
+- They can't read the Windows drive (`/mnt`), Claude's sign-in, SSH/AWS keys or npm/git credentials, except their own copy of the project and the parts of git it needs.
+- They can only write to their own copy, plus git objects and their own `mymanager/*` branch. They can't write the copy's `.git` or `.claude` settings.
+- The network is limited to npm, PyPI and GitHub.
+- Nothing from Windows' environment crosses over (`WSLENV` empty, `env -i`).
+- The file tools (Read/Edit/Write) are kept off MyManager's folder, Documents, AppData and key folders, and the guard still runs as a hook.
+- If the sandbox is switched on but not working (a tool missing, WSL not answering, the copy on another drive), nothing runs, and MyManager asks Thomas. It never quietly falls back to running unsandboxed.
+
+`CODER_SANDBOX=native` does the same on Linux or macOS without WSL. Unset means the guard only. Ubuntu needs `bubblewrap`, `socat`, `git`, Node (via nvm), `@anthropic-ai/claude-code` (signed in) and `@anthropic-ai/sandbox-runtime`. `npm test` checks the walls for real wherever bwrap, socat and srt are installed.
 
 ## What leaves the PC
 - **To Anthropic (through the Claude Code app or the API):** the assistant's prompt, which includes project names, briefs, rules, open tasks, recent activity, files it reads from project folders and command output it runs. Never .env or key files.

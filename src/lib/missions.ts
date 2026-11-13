@@ -281,11 +281,17 @@ Rules:
 - If you need a decision or something only Thomas can give, stop and ask it.
 End your reply with exactly one line, either "RESULT: done - <one line on what changed>" or "RESULT: stuck - <the one question for Thomas>".`;
   const isWin = process.platform === "win32";
-  const { guarded } = await import("@/lib/agent/guard");
-  const guard = guarded(dir, `code-${shortId(id)}`); // the app blocks anything destructive, whatever the model does
-  const args = ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", CODER_TOOLS.join(","), "--disallowedTools", CODER_DENY.join(","), ...guard.args];
-  const argv = isWin ? args.map((a) => (/[\s&()^|<>]/.test(a) ? `"${a}"` : a)) : args;
-  const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: dir, shell: isWin, env: guard.env, stdio: ["pipe", "pipe", "pipe"], detached: !isWin });
+  // Inside the sandbox when it's switched on (lib/sandbox.ts), otherwise with the guard hook. If the sandbox is on
+  // but not working, nothing runs: it never quietly falls back to running unsandboxed.
+  const { claudeLaunch } = await import("@/lib/sandbox");
+  const how = await claudeLaunch({ workDir: dir, tag: `code-${shortId(id)}`,
+    args: ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", CODER_TOOLS.join(","), "--disallowedTools", CODER_DENY.join(",")] });
+  if ("problem" in how) {
+    await db().from("missions").update({ worker: "idle" }).eq("id", id);
+    await askThomas(id, `The coder's sandbox isn't working (${how.problem}), so I haven't started it. Fix the sandbox, or turn it off (CODER_SANDBOX in .env.local) if you want coders to run with the guard only.`);
+    return `Not started: the sandbox isn't working (${how.problem}).`;
+  }
+  const child = spawn(how.cmd, how.args, { cwd: dir, shell: how.shell, env: how.env, stdio: ["pipe", "pipe", "pipe"], detached: !isWin, windowsHide: true });
   coders.set(id, child);
   let out = "", err = "";
   child.stdout.on("data", (d) => { out += d.toString(); });

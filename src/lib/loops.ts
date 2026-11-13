@@ -5,8 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
-import { guarded } from "@/lib/agent/guard";
-import { workerEnv } from "@/lib/worker-env";
+import { checkLaunch, claudeLaunch } from "@/lib/sandbox";
 import { askThomas, finishMission, logMission, shortId, startCodingStep, type Mission } from "@/lib/missions";
 
 /**
@@ -22,7 +21,6 @@ const SAFE_CHECK = /^(npm (test|run [\w:-]+)|npx (tsc|eslint|vitest|jest|playwri
 const RISKY_SCRIPT = /\b(deploy|release|publish|push|ship|prod|clean|reset|drop|seed|migrate|start|serve|dev)\b/i;
 export const isSafeCheck = (cmd: string) => SAFE_CHECK.test(cmd.trim()) && !RISKY_SCRIPT.test(cmd);
 
-const isWin = process.platform === "win32";
 const git = (cwd: string, args: string[]) => new Promise<{ ok: boolean; out: string }>((resolve) => {
   execFile("git", args, { cwd, timeout: 60_000, windowsHide: true }, (e, so, se) => resolve({ ok: !e, out: `${so}${se}`.trim() }));
 });
@@ -56,10 +54,13 @@ export async function ensureWorktree(m: Mission): Promise<{ dir: string; note?: 
   return { dir, note: `Working in a separate copy at ${dir} (from commit ${base.slice(0, 7)}), so your own folder isn't touched.${deps}` };
 }
 
-function run(cmd: string, cwd: string, ms = 15 * 60_000) {
-  return new Promise<{ code: number; out: string }>((resolve) => {
-    // The check runs the project's own scripts, so it gets none of MyManager's keys or tokens.
-    const child = spawn(cmd, { cwd, shell: true, windowsHide: true, env: workerEnv({ CI: "1", FORCE_COLOR: "0" }) });
+async function run(command: string, cwd: string, ms = 15 * 60_000) {
+  // The check runs the project's own scripts, so it gets none of MyManager's keys or tokens, and runs inside the
+  // sandbox when that's switched on (never outside it if the sandbox is on but broken).
+  const how = await checkLaunch(command, cwd);
+  if ("problem" in how) return { code: 1, out: `The sandbox isn't working (${how.problem}), so the check didn't run.`, blocked: how.problem };
+  return new Promise<{ code: number; out: string; blocked?: string }>((resolve) => {
+    const child = spawn(how.cmd, how.args, { cwd, shell: how.shell, windowsHide: true, env: how.env });
     let out = "";
     const add = (d: Buffer) => { out = (out + d.toString()).slice(-20_000); };
     child.stdout.on("data", add); child.stderr.on("data", add);
@@ -70,18 +71,19 @@ function run(cmd: string, cwd: string, ms = 15 * 60_000) {
 }
 
 /** The second opinion: a read-only Claude that only looks at the diff. */
-function review(m: Mission, dir: string, base: string) {
+async function review(m: Mission, dir: string, base: string): Promise<{ ok: boolean; text: string; blocked?: string }> {
   const prompt = `You are reviewing a change another agent made for Thomas. You can only read.
 The job was: ${m.goal}
 The check \`${m.done_check}\` now passes.
 Look at the change with \`git diff ${base}...HEAD\` and \`git log ${base}..HEAD\`. Judge it: does it really do the job (not just make the check pass, e.g. by deleting or skipping tests), is it small and safe, any obvious bug, secret or real-money code?
 End with exactly one line: "VERDICT: approve - <one line>" or "VERDICT: changes - <the specific changes needed>".`;
   const tools = ["Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)"];
-  const guard = guarded(null, `review-${shortId(m.id)}`); // read-only: the guard blocks any change, whatever the reviewer tries
-  const args = ["-p", "--output-format", "json", "--allowedTools", tools.join(","), "--disallowedTools", "Edit,Write,NotebookEdit,Task,WebFetch", ...guard.args];
-  const argv = isWin ? args.map((a) => (/[\s&()^|<>]/.test(a) ? `"${a}"` : a)) : args;
-  return new Promise<{ ok: boolean; text: string }>((resolve) => {
-    const child = spawn(process.env.CLAUDE_BIN ?? (isWin ? "claude.cmd" : "claude"), argv, { cwd: dir, shell: isWin, env: guard.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  // read-only: the guard (and the sandbox, when on) blocks any change, whatever the reviewer tries
+  const how = await claudeLaunch({ workDir: dir, readOnly: true, tag: `review-${shortId(m.id)}`,
+    args: ["-p", "--output-format", "json", "--allowedTools", tools.join(","), "--disallowedTools", "Edit,Write,NotebookEdit,Task,WebFetch"] });
+  if ("problem" in how) return { ok: false, text: `The reviewer's sandbox isn't working (${how.problem}), so it didn't run.`, blocked: how.problem };
+  return new Promise<{ ok: boolean; text: string; blocked?: string }>((resolve) => {
+    const child = spawn(how.cmd, how.args, { cwd: dir, shell: how.shell, env: how.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let out = "";
     child.stdout.on("data", (d) => { out += d.toString(); });
     child.stdin.write(prompt); child.stdin.end();
@@ -113,6 +115,7 @@ export async function loopRound(id: string, note?: string) {
     if (!wt.dir) { await askThomas(id, `I couldn't make a separate copy of the project to work in (${wt.note}), so I haven't touched your folder. What should I do?`); return; }
     if (wt.note && !hadCopy) await logMission(id, "note", wt.note);
     const ran = await run(m.done_check, wt.dir);
+    if (ran.blocked) { await askThomas(id, `${ran.out} Fix the sandbox, or turn it off (CODER_SANDBOX in .env.local) to run checks without it.`); return; }
     const passed = ran.code === 0;
     await logMission(id, "check", `${m.done_check}: ${passed ? "passes" : "fails"} (round ${m.rounds + 1} of ${m.max_rounds})`);
     await db().from("missions").update({ last_check_at: new Date().toISOString(), next_check_at: new Date(Date.now() + (m.check_every_minutes || 60) * 60_000).toISOString(), last_update: passed ? "Check passes, getting it reviewed" : `Round ${m.rounds + 1}: check still failing, fixing it` }).eq("id", id);
@@ -145,6 +148,7 @@ export async function loopRound(id: string, note?: string) {
       return;
     }
     const rv = await review(m, wt.dir, base.trim());
+    if (rv.blocked) { await askThomas(id, `${rv.text} Fix the sandbox, or turn it off (CODER_SANDBOX in .env.local) to review without it.`); return; }
     await logMission(id, "review", `${rv.ok ? "Approved" : "Changes asked"} (commit ${head.slice(0, 7)}): ${rv.text}`);
     const moved = (await git(wt.dir, ["rev-parse", "HEAD"])).out.trim() !== head;
     if (rv.ok && moved) { await logMission(id, "note", "The branch changed while it was being reviewed, so I'll check and review it again."); setTimeout(() => { void loopRound(id).catch(() => {}); }, 2000); return; }
