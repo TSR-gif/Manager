@@ -1,5 +1,5 @@
 import "server-only";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -56,9 +56,19 @@ export function readDataFile(file: string, sheet: string | null, fromRow = 1): s
   try {
     if (ext === ".xlsx" || ext === ".xlsm") return workbookText(fs.readFileSync(real), sheet, fromRow);
     if (ext === ".xls") return "Old .xls workbooks can't be read here. If it matters, ask Thomas to save a copy as .xlsx.";
+    if (ext === ".pdf") {
+      // pdftotext comes with Git for Windows; "-" prints the text instead of writing a file
+      for (const bin of ["pdftotext", "C:\\Program Files\\Git\\mingw64\\bin\\pdftotext.exe"]) {
+        try {
+          const t = execFileSync(bin, ["-layout", "-l", "30", real, "-"], { timeout: 30_000, maxBuffer: 16 << 20, windowsHide: true }).toString("utf8");
+          return t.length > MAX ? `${t.slice(0, MAX)}\n…(cut, ${t.length} characters in total)` : t || "(no text in this PDF: it may be a scan)";
+        } catch { /* try the next one */ }
+      }
+      return "Couldn't read this PDF here (pdftotext isn't on this PC). Try the Read tool.";
+    }
     if (TEXT_EXT.has(ext)) { const t = fs.readFileSync(real, "utf8"); return t.length > MAX ? `${t.slice(0, MAX)}\n…(cut, ${t.length} characters in total)` : t; }
   } catch (e) { return `Couldn't read it: ${String(e).slice(0, 200)}`; }
-  return "Read PDFs and images with the Read tool. Other kinds of file can't be read here.";
+  return "Read images with the Read tool. Other kinds of file can't be read here.";
 }
 
 /** The newest commit we can see: the PC folder first, then GitHub. */
@@ -144,16 +154,16 @@ export function studyGoal(p: BriefProject) {
   return `Study the ${p.name} project in depth. Thomas: "The whole idea is for this to automate my day to day life." His apps hold a lot about his business and life, and you need to really understand each one: what it does, what its data says, where it lives, and what's broken. Skimming a README is not enough. Everything here is READ-ONLY: never change, move or delete anything, and never run anything that writes.
 1. Call inspect_project("${p.name}").
 2. ${hasCode(p) ? "Read the code with read_project_file: README/CLAUDE.md, the package or requirements file, entry points, config and hosting files (vercel.json, workflows), the database scripts or migrations (they show every table), and the core source files for each feature. Read as much as you need to really understand it, often 15 to 30 files. Never secrets or .env files." : "There's no code linked. Work from what Thomas has written and the data you can find."}
-3. Find the data. ${paths.length ? `Its data is in: ${paths.join("; ")}. Check for new files there too.` : `Look for folders and files about ${p.name} on his PC with Glob (OneDrive, Documents, Desktop, Downloads), e.g. a company folder, spreadsheets, exports, invoices, reports.`} Read spreadsheets with read_data_file (it shows sheets, formulas and the macros' code; ask for one sheet to see all its rows), PDFs with Read.${p.github_repo ? ` Call read_app_data("${p.name}", null) for the live app data from its weekly database backup, then read the tables that matter (money, clients, jobs, people, dates).` : ""}
+3. Find the data. ${paths.length ? `Its data is in: ${paths.join("; ")}. Check for new files there too.` : `Look for folders and files about ${p.name} on his PC with Glob (OneDrive, Documents, Desktop, Downloads), e.g. a company folder, spreadsheets, exports, invoices, reports.`} Also look for the project's code on his PC (an old copy or a folder named after it) and for stray copies of its data files. Read every current spreadsheet you find with read_data_file, not just one (it shows each sheet's first and last rows, formulas and the macros' code). The overview hides middle rows, so for the sheets that hold money, people, jobs or dates, ask for the whole sheet (sheet name, then from_row for more). Read PDFs with read_data_file too; for many similar PDFs (daily reports, invoices), read the newest one or two.${p.github_repo ? ` Call read_app_data("${p.name}", null) for the live app data from its weekly database backup, then read the tables that matter (money, clients, jobs, people, dates).` : ""}
 4. Work out the real facts: totals, what's outstanding or overdue, what's recent, what stopped. Check your sums.
-5. Call save_project_knowledge with data_paths (the data folders/files you found, one per line, or null) and the knowledge in this shape, plain words, specific, no guessing ("not sure" where you can't tell):
+5. Call save_project_knowledge with data_paths (the folders/files that hold this project's data: full paths only, one per line, no notes, never a whole general folder like Downloads or Documents; or null) and the knowledge in this shape, plain words, specific, no guessing ("not sure" where you can't tell):
 ${knowledgeSections()}
 ${hasCode(p) ? `6. Call save_project_brief with the brief in this shape (it's written into the project's folder, so NO money figures, client or worker names, or personal details in it: those go in the knowledge only):
 ${briefSections()}` : "6. Don't write a brief (there's no code)."}
 ${p.rules ? `\nThomas's own rules for this project (respect them, don't copy them): ${p.rules}` : ""}
 ${p.knowledge ? `\nWhat you worked out last time (${p.knowledge_updated_at?.slice(0, 10) ?? "earlier"}). Check it against what's there now and update it:\n${p.knowledge}` : ""}
 ${p.brief ? `\nThe current brief is below.${p.brief_edited_by_you ? " Thomas corrected it himself: keep his corrections unless the code clearly shows they're now out of date." : ""} Update it rather than starting over:\n${p.brief}` : ""}
-Finish with one line saying what you learned that's new.`;
+This runs in the background with nobody watching, so don't ask questions or offer to do things: put anything for Thomas under "Needs Thomas". Finish with one line saying what you learned that's new.`;
 }
 
 let studying = false;
@@ -186,7 +196,7 @@ export async function refreshDueBriefs() {
       const age = Date.now() - studied;
       if (age < 12 * 3600_000) continue;
       const sha = hasCode(p) ? await latestCommit(p) : null;
-      const moved = (sha && sha !== p.brief_commit) || newestData(p) > studied || (age > 7 * 86_400_000 && (hasCode(p) || dataPaths(p).length > 0));
+      const moved = (sha && sha !== p.brief_commit) || (age > 86_400_000 && newestData(p) > studied) || (age > 7 * 86_400_000 && (hasCode(p) || dataPaths(p).length > 0));
       if (moved) return { project: p.name, runId: await studyProject(p.id) };
     }
     return null;

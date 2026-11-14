@@ -226,7 +226,7 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
   },
   {
     name: "read_data_file",
-    description: "Read a data file on Thomas's PC, read-only: an Excel workbook (.xlsx/.xlsm, including its macros' code) or a .csv/.sql/.json/.txt export. Without sheet you get every sheet's first and last rows plus the macros; with sheet you get up to 300 rows of it from from_row. path is a full path inside his user folder. Never opens secret files.",
+    description: "Read a data file on Thomas's PC, read-only: an Excel workbook (.xlsx/.xlsm, including its macros' code), a PDF (its text), or a .csv/.sql/.json/.txt export. Without sheet you get every sheet's first and last rows plus the macros; with sheet you get up to 300 rows of it from from_row. path is a full path inside his user folder. Never opens secret files.",
     input_schema: { type: "object", properties: { path: str, sheet: nstr, from_row: { type: ["integer", "null"] } }, required: ["path", "sheet", "from_row"], additionalProperties: false },
     strict: true,
   },
@@ -372,6 +372,12 @@ async function noProject(name: unknown) {
   const { data } = await db().from("projects").select("name").order("priority");
   return { label: "Couldn't match that project name", result: `No project matches "${name}". The projects are: ${(data ?? []).map((p: { name: string }) => p.name).join(", ")}. Try again with one of these exact names.`, isError: true };
 }
+
+/** Whole general folders (Downloads, Documents...) aren't a project's data: watching them would restudy on every download. */
+const BROAD = /^[a-z]:[\\/]users[\\/][^\\/]+([\\/](downloads|documents|desktop|onedrive|pictures))?[\\/]?$/i;
+
+/** Claude sometimes sends the word "null" (or nothing) for an optional field: treat it as no value. */
+const opt = (v: unknown) => (v === null || v === undefined || /^(null|none|)$/i.test(String(v).trim()) ? null : String(v));
 
 /** Runs one tool call. Returns text for Claude plus a short label for the UI. */
 export async function runTool(name: string, input: Record<string, unknown>): Promise<{ result: string; label: string; isError?: boolean }> {
@@ -575,19 +581,21 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
       case "read_data_file": {
         const { readDataFile } = await import("@/lib/briefs");
         const file = String(input.path ?? "");
-        return { label: `Read ${file.split(/[\\/]/).pop()}${input.sheet ? ` (${input.sheet})` : ""}`, result: readDataFile(file, (input.sheet as string | null) ?? null, Number(input.from_row) || 1) };
+        return { label: `Read ${file.split(/[\\/]/).pop()}${opt(input.sheet) ? ` (${input.sheet})` : ""}`, result: readDataFile(file, opt(input.sheet), Number(input.from_row) || 1) };
       }
       case "read_app_data": {
         const p = await findProject(input.project_name as string);
         if (!p) return noProject(input.project_name);
         if (!p.github_repo) return { label: "No app data to read", result: `${p.name} has no GitHub repo, so there are no database backups to read.` };
         const { snapshotText } = await import("@/lib/snapshots");
-        return { label: `Read ${p.name}'s data${input.table ? ` (${input.table})` : ""}`, result: await snapshotText(p.github_repo, (input.table as string | null) ?? null, Math.max(0, Number(input.offset) || 0)) };
+        return { label: `Read ${p.name}'s data${opt(input.table) ? ` (${input.table})` : ""}`, result: await snapshotText(p.github_repo, opt(input.table), Math.max(0, Number(input.offset) || 0)) };
       }
       case "save_project_knowledge": {
         const p = await findProject(input.project_name as string);
         if (!p) return noProject(input.project_name);
-        const paths = input.data_paths === null ? null : String(input.data_paths ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).join("\n") || null;
+        // one path per line; drop notes Claude adds after a path, like "C:\x (old copies)"
+        const paths = (opt(input.data_paths) ?? "").split(/\r?\n/).map((s) => s.trim().replace(/\s+\(.*\)$/, ""))
+          .filter((s) => s && !BROAD.test(s)).join("\n") || null;
         const { error } = await db().from("projects").update({ knowledge: String(input.knowledge).slice(0, 30000), knowledge_updated_at: new Date().toISOString(), data_paths: paths }).eq("id", p.id);
         if (error) return { label: "Couldn't save what I learned", result: `Not saved: ${error.message}`, isError: true };
         return { label: `Saved what I learned about ${p.name}`, result: "Saved privately. You'll see it in inspect_project." };
