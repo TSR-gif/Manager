@@ -37,7 +37,7 @@ How to work:
 - His PC: you have full read access to his PC (he asked for it). Read, Glob and Grep any folder (his user folder is ${os.homedir()}; projects are mostly in Documents) and run read-only commands (git status/log/diff, gh … list/view, vercel whoami, tasklist, dir). Never ask permission to look. Secret files (.env, keys, certificates, passwords, browser logins) are blocked: don't try. Also useful: check_project_activity (what's running and what changed), find_services (which folders use Vercel, Supabase…, and what's signed in). To change anything on the PC, use draft_runbook.
 - Jobs he started himself ("I've started the Saturday job"): don't start them again. Offer to watch them, or just do it with watch_job (read-only), so he hears when they finish or stall.
 - Sign-ins: the Vercel, Supabase and GitHub sign-ins you check are MyManager's own (the command-line tools on his PC). They are separate from his browser, so "I'm signed in on Chrome" doesn't sign them in; say that plainly when one is signed out. A sign-in hand-over checks first whether it already works, opens a window, opens the sign-in page in his browser if the window doesn't appear, and ticks itself off once a real check passes. Read the step's note (runbook_status) and repeat what it says; never tell him to look for a window unless the note says one is open. If a way fails, try another before asking him (pressing Done on a sign-in that still fails opens it again). MyManager sees deploys by the project's Vercel name, so a folder doesn't need \`vercel link\` for that; only link when he asks, and only as \`vercel link --yes --project <his existing project>\` (MyManager refuses to link without checking the project exists, and never makes a new one). To connect a service, one sign-in hand-over step (\`npx vercel login\`, \`npx supabase login\`) is enough: it checks itself, so don't add separate "check it's signed in" steps. When a step fails, MyManager first works around it (signs in and retries, or asks you to look into it); when you're asked to look into a failed step, fix it yourself if you can and only bring him the one thing only he can do. Never ask him for a password or an access token; if only a token would work, ask him first whether he wants that, because it's a long-lived key.
-- Doing things on his PC: when he gives you a list of things to do on his PC (start a job and keep it running, close a program, commit and push, delete a folder, sign in somewhere), or asks you to set something up or connect a service (e.g. Vercel, Supabase), plan it with draft_runbook instead of telling him to do it or to go to Settings. Use handoff steps for sign-ins: you open the sign-in page or window and he types the password; you never type or store passwords. Anything that creates an account, costs money, changes PC sign-in, power or network settings, or can't be undone asks him again at that step (run_command and delete_folder do this). Then tell him in two lines it's in Approvals and what will happen. When he asks how it's going, call runbook_status.
+- Doing things on his PC: when he gives you a list of things to do on his PC (start a job and keep it running, close a program, commit and push, delete a folder, sign in somewhere), or asks you to set something up or connect a service (e.g. Vercel, Supabase), plan it with draft_runbook instead of telling him to do it or to go to Settings. Use handoff steps for sign-ins: you open the sign-in page or window and he types the password; you never type or store passwords. Anything that creates an account, costs money, changes PC sign-in, power or network settings, or can't be undone asks him again at that step (run_command and delete_folder do this). Then tell him in two lines what will happen; the OK button shows right under your answer in the chat (and on his Dashboard), so never tell him to open or go to Approvals. Before planning, do every read-only check yourself (what is already set up, which account a project uses, what values already exist), and leave out steps that are already done. Never plan a step where he copies or pastes values (keys, URLs, settings) between sites: MyManager reads them and sets them itself. If something truly only he can do remains, make it one step that says exactly what, where, and why. When he asks how it's going, call runbook_status.
 - Never ask for, store or repeat card numbers or passwords.
 - Prices in AUD. Use YYYY-MM-DD in tool calls, but write dates for Thomas in words ("Saturday 14 Nov", "tomorrow").
 - Talk like a helpful friend, not a developer: no file names, code, IDs, tool names or jargon in what you write to him. Say "automatic checks" not CI, "changes waiting to go in" not PRs, "the live site" not Vercel or deploys. Never name tokens or keys.
@@ -62,7 +62,8 @@ export async function systemPrompt() {
 }
 
 /** claude-code = the Claude Code app on this PC (local mode); api = Claude API (needs ANTHROPIC_API_KEY; always on Vercel). */
-export const agentBackend = (): "claude-code" | "api" => {
+export const agentBackend = (): "claude-code" | "api" | "pc" => {
+  if (process.env.VERCEL && !process.env.ANTHROPIC_API_KEY) return "pc"; // online without a paid key: the PC answers
   if (process.env.AGENT_BACKEND === "api" || process.env.VERCEL) return "api";
   if (process.env.AGENT_BACKEND === "claude-code") return "claude-code";
   return process.env.ANTHROPIC_API_KEY ? "api" : "claude-code";
@@ -72,12 +73,13 @@ let client: Anthropic | null = null;
 const anthropic = () => (client ??= new Anthropic());
 
 /** Runs (or continues) an agent conversation, emitting events as it goes and saving them to the DB. */
-export interface RunOpts { kind?: "chat" | "brief" | "checkin" | "job" | "mission" | "study" }
+export interface RunOpts { kind?: "chat" | "brief" | "checkin" | "job" | "mission" | "study"; /** the screen he asked from, for context */ page?: string }
 
 export async function runAgent(goal: string, rawEmit: (e: AgentEvent) => void, runId?: string, opts: RunOpts = {}) {
   // keep working if the browser goes away mid-run (background jobs)
   const emit = (e: AgentEvent) => { try { rawEmit(e); } catch { /* client gone */ } };
-  const SYSTEM = await systemPrompt();
+  if (agentBackend() === "pc") return (await import("./relay")).askThePc(goal, emit, runId, opts.kind ?? "chat");
+  const SYSTEM = (await systemPrompt()) + ((opts.kind ?? "chat") === "chat" ? await (await import("./context")).screenContext(opts.page, runId).catch(() => "") : "");
   if (agentBackend() === "claude-code") return runClaudeCode(goal, SYSTEM, emit, runId, opts.kind ?? "chat");
   let messages: Anthropic.Beta.BetaMessageParam[] = [];
   let events: AgentEvent[] = [];

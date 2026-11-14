@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
-import { answerMissionForm, decideAction, runbookStepDone, undoActivity } from "@/app/actions";
+import { answerMissionForm, decideAction, runbookStepDone, setPasswordForStep, undoActivity } from "@/app/actions";
 import { approveLabel, helperLook, kindLook } from "@/lib/helper-look";
 import type { Ask, Done, WaitingStep, Work } from "@/lib/today";
 import type { Action } from "@/lib/types";
@@ -33,14 +33,14 @@ export function Decisions({ approvals, asks, steps, name, max = 99, hideTile }: 
         </div>
       ))}
       {ss.map((s) => (
-        <div key={s.runbookId + s.stepId} className="dec">
+        <div key={s.runbookId + s.stepId} className={`dec ${s.form ? "dec-col" : ""}`}>
           {!hideTile && <Tile l={look(name(s.project_id), "runbook")} />}
           <div className="dt"><b>{s.label}</b><span>{s.note || [name(s.project_id), s.runbook, "your turn"].filter(Boolean).join(" · ")}</span></div>
-          <div className="da">
+          {s.form === "password" ? <PasswordForm runbookId={s.runbookId} stepId={s.stepId} /> : <div className="da">
             {s.url && <a href={s.url} target="_blank" rel="noreferrer" className="btn btn-primary">Open sign-in</a>}
             <form action={runbookStepDone}><input type="hidden" name="id" value={s.runbookId} /><input type="hidden" name="step" value={s.stepId} /><button className={`btn ${s.url ? "" : "btn-primary"}`}>{s.handoff ? "Done" : "Try again"}</button></form>
             <form action={runbookStepDone}><input type="hidden" name="id" value={s.runbookId} /><input type="hidden" name="step" value={s.stepId} /><input type="hidden" name="outcome" value="skipped" /><button className="btn">{s.handoff ? "Not needed" : "Skip"}</button></form>
-          </div>
+          </div>}
         </div>
       ))}
       {as.map((a) => (
@@ -95,5 +95,17 @@ export function DoneForYou({ done }: { done: Done[] }) {
         ))}
       </ul>
     </details>
+  );
+}
+
+/** His new password, typed right on the card (never in a chat, never shown back). */
+export function PasswordForm({ runbookId, stepId }: { runbookId: string; stepId: string }) {
+  return (
+    <form action={setPasswordForStep} className="ans flex-wrap">
+      <input type="hidden" name="id" value={runbookId} /><input type="hidden" name="step" value={stepId} />
+      <input name="password" type="password" placeholder="New password" minLength={10} required autoComplete="new-password" />
+      <input name="again" type="password" placeholder="Same again" minLength={10} required autoComplete="new-password" />
+      <button className="btn btn-primary">Save</button>
+    </form>
   );
 }

@@ -400,7 +400,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const { draftRunbook } = await import("@/lib/runbooks");
         const res = await draftRunbook({ project_id: p?.id ?? null, work_dir: dir, title: String(input.title), steps: (input.steps as never[]) ?? [] });
         if (!res.ok) return { label: "Couldn't plan that runbook", result: `Not saved. Fix these and try again:\n${res.problems.join("\n")}`, isError: true };
-        return { label: `Planned “${input.title}”, waiting for your OK`, result: "Saved. It's in Approvals as one list; nothing runs until Thomas approves. Deleting and setup commands ask again at that step. Progress shows on the Running screen and comes to Telegram." };
+        return { label: `Planned “${input.title}”, waiting for your OK`, result: "Saved as one plan; nothing runs until Thomas presses OK. The OK button appears right under your answer in this chat and on his Dashboard, so don't send him to Approvals. Deleting and setup commands ask again at that step. Progress shows on the Running screen and comes to Telegram." };
       }
       case "find_services": {
         const { findServices } = await import("@/lib/services");

@@ -4,6 +4,7 @@ import { endFocus } from "./actions";
 import { getActiveFocus, getProjects, getSettings } from "@/lib/queries";
 import { TZ } from "@/components/ui";
 import { AskBar } from "@/components/ask-bar";
+import { DashChat } from "@/components/dash-chat";
 import { Head } from "@/components/nav";
 import { Decisions, DoneForYou, WorkingOn } from "@/components/decisions";
 import { db } from "@/lib/db";
@@ -12,7 +13,8 @@ import { nextOnCalendar, projectNames, todayData } from "@/lib/today";
 
 export const dynamic = "force-dynamic";
 
-export default async function Today() {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ pw?: string }> }) {
+  const { pw } = await searchParams;
   const [projects, focus, settings, t, next] = await Promise.all([getProjects(), getActiveFocus(), getSettings(), todayData(), nextOnCalendar()]);
   const name = projectNames(projects);
   const assistant = (settings as { assistant_name?: string }).assistant_name || "MyManager";
@@ -23,7 +25,7 @@ export default async function Today() {
 
   return (
     <>
-      <Head title="Today" phoneTitle="MyManager" />
+      <Head title="Dashboard" phoneTitle="MyManager" />
       {t.work.length > 0 && <AutoRefresh every={15} />}
       <div className="pagewrap fade-in">
         <h1 className="hello">{greeting}, Thomas</h1>
@@ -37,6 +39,7 @@ export default async function Today() {
         {t.needCount > 0 ? (
           <section id="needs">
             <div className="sec">Needs you</div>
+            {pw && <div className="mb-2 text-[13.5px] text-bad">{pw}</div>}
             <Decisions approvals={t.approvals} asks={t.asks} steps={t.steps} name={name} max={8} />
           </section>
         ) : (
@@ -61,6 +64,7 @@ export default async function Today() {
         )}
 
         <DoneForYou done={t.done} />
+        <DashChat name={assistant} />
         <AskBar name={assistant} quick />
       </div>
     </>

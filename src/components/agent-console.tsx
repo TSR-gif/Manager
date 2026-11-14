@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { chatApprovals, decideFromChat, type ChatApproval } from "@/app/actions";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { ArrowUp, Brain, Check, Globe, Loader2, ShieldCheck, Square, TriangleAlert, Volume2, Wrench, X } from "lucide-react";
 import { speak, stopSpeaking } from "./speak";
 import type { AgentEvent } from "@/lib/agent/run";
@@ -82,9 +82,10 @@ function toSteps(events: AgentEvent[]): Step[] {
 }
 
 /** `embedded` is the assistant bubble: it stays on the page he's on, takes asks through `incoming`, and reports back so the bubble can show it's busy or has an answer. */
-export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, voice, name = "MyManager", embedded = false, incoming, onRun, onBusy, onAnswer }: {
+export function AgentConsole({ initialEvents, runId: initialRunId, goal: initialGoal, running, ask, voice, name = "MyManager", embedded = false, inline = false, page, incoming, onRun, onBusy, onAnswer }: {
   initialEvents: AgentEvent[]; runId?: string; goal?: string; running?: boolean; ask?: string; voice?: boolean; name?: string;
-  embedded?: boolean; incoming?: { text: string; voice?: boolean; n: number }; onRun?: (id: string) => void; onBusy?: (busy: boolean) => void; onAnswer?: () => void;
+  /** inline: part of a page (the Dashboard), which has its own ask box, so no box or welcome here */
+  embedded?: boolean; inline?: boolean; page?: string; incoming?: { text: string; voice?: boolean; n: number }; onRun?: (id: string) => void; onBusy?: (busy: boolean) => void; onAnswer?: () => void;
 }) {
   const [speaking, setSpeaking] = useState<number | null>(null);
   const say = (text: string, i: number) => { if (speak(text, () => setSpeaking(null))) setSpeaking(i); };
@@ -94,6 +95,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
+  const [asked2, setAsked] = useState(0); // bumps after each answer, so the OK cards below are looked up again
   const router = useRouter();
 
   // a different conversation was opened: show it. (Not on first mount: state already starts from the props, and
@@ -126,7 +128,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
     setInput("");
     if (!runId) { setGoal(text); setEvents([]); }
     try {
-      const res = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: text, runId }) });
+      const res = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: text, runId, page: page ?? window.location.pathname }) });
       if (!res.ok || !res.body) throw new Error(await res.text());
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -151,6 +153,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
     } finally {
       setBusy(false);
       onBusy?.(false);
+      setAsked((n) => n + 1);
       if (embedded) { newRun.current = null; router.refresh(); } // stay on his page; refresh it in case the answer changed something here
       else if (newRun.current) { router.replace(`/agent?run=${newRun.current}`); newRun.current = null; }
       else router.refresh();
@@ -161,6 +164,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
   const steps = foldSteps(toSteps(events), finished);
   const lastDone = steps.map((x) => x.kind).lastIndexOf("done");
   const empty = !goal && steps.length === 0;
+  if (inline && empty && !busy) return null;
 
   return (
     <div className={`flex flex-col ${embedded ? "min-h-full" : "min-h-[70dvh]"}`}>
@@ -168,7 +172,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
         <div className={`flex flex-1 flex-col items-center justify-center text-center ${embedded ? "px-1 py-6" : "py-10"}`}>
           <div className={`mb-4 ${embedded ? "" : "hidden sm:block"}`}><Orb size={embedded ? 48 : 64} /></div>
           <h2 className="text-[19px] font-semibold tracking-tight sm:text-[22px]">Hi, I&apos;m {name}. What can I do for you?</h2>
-          <p className="mt-1 max-w-md text-[14px] text-muted">Ask a question or hand me a job. I plan it, do what I can (tasks, research, GitHub, decisions), and anything that costs money or acts as you goes to Approvals first.</p>
+          <p className="mt-1 max-w-md text-[14px] text-muted">Ask a question or hand me a job. I plan it, do what I can (tasks, research, GitHub, decisions), and ask for your OK, right here, before anything that costs money or acts as you.</p>
           <div className={`mt-6 grid w-full max-w-2xl gap-2 ${embedded ? "" : "sm:grid-cols-2"}`}>
             {(embedded ? EMBED_SUGGESTIONS : SUGGESTIONS).map((s) => (
               <button key={s} onClick={() => (s.endsWith(" ") ? setInput(s) : send(s))} className="card card-hover !p-3 text-left text-[13.5px] text-muted hover:text-text">{s}</button>
@@ -200,7 +204,7 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
                   <div className={`flex items-center gap-1.5 text-[13px] ${s.isError ? "text-bad" : s.approval ? "text-warn" : "text-muted"}`}>
                     {s.approval ? <ShieldCheck size={13} /> : s.done && s.isError ? <X size={13} className="text-bad" /> : s.done ? <Check size={13} className="text-good" /> : <Wrench size={13} />}
                     {s.label}
-                    {s.approval && s.done && !s.isError && <Link href="/approvals" className="ml-1 text-accent">review →</Link>}
+                    
                   </div>
                 )}
                 {s.kind === "group" && (
@@ -243,11 +247,12 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
               </li>
             )}
           </ol>
+          {runId && finished && <ChatOks runId={runId} n={asked2} />}
           <div ref={bottom} />
         </div>
       )}
 
-      <form onSubmit={(e) => { e.preventDefault(); send(input); }}
+      {!inline && <form onSubmit={(e) => { e.preventDefault(); send(input); }}
         className={`sticky z-10 ${embedded ? "bottom-0 bg-bg pb-3 pt-1" : "bottom-[84px] md:bottom-4"}`}>
         <div className={`flex items-end gap-2 rounded-2xl border border-line2 bg-panel/95 p-2 backdrop-blur-xl focus-within:border-accent ${embedded ? "shadow-sm" : "shadow-2xl"}`}>
           <textarea
@@ -262,7 +267,33 @@ export function AgentConsole({ initialEvents, runId: initialRunId, goal: initial
             {busy ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
           </button>
         </div>
-      </form>
+      </form>}
+    </div>
+  );
+}
+
+/** The OK this chat is waiting on, right under the answer, so he never has to go and find it in Approvals. */
+function ChatOks({ runId, n }: { runId: string; n: number }) {
+  const [items, setItems] = useState<ChatApproval[]>([]);
+  const [done, setDone] = useState<Record<string, string>>({});
+  const [pending, start] = useTransition();
+  useEffect(() => { let on = true; chatApprovals(runId).then((x) => { if (on) setItems(x); }).catch(() => {}); return () => { on = false; }; }, [runId, n]);
+  if (!items.length) return null;
+  const decide = (id: string, ok: boolean) => start(async () => { await decideFromChat(id, ok); setDone((d) => ({ ...d, [id]: ok ? "Done. I'm on it." : "OK, I won't." })); });
+  return (
+    <div className="space-y-2">
+      {items.map((a) => (
+        <div key={a.id} className="dec !mb-0">
+          <div className="dt"><b>{a.title}</b>{a.reason && <span>{a.reason}</span>}</div>
+          {a.cost_cents > 0 && <div className="amt">${(a.cost_cents / 100).toFixed(2)}</div>}
+          {done[a.id] ? <div className="text-[13.5px] text-muted">{done[a.id]}</div> : (
+            <div className="da">
+              <button disabled={pending} onClick={() => decide(a.id, true)} className="btn btn-primary">{a.cost_cents > 0 ? "Approve and pay" : "OK, do it"}</button>
+              <button disabled={pending} onClick={() => decide(a.id, false)} className="btn">Not now</button>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
