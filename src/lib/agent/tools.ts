@@ -166,7 +166,7 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
   },
   {
     name: "draft_social_post",
-    description: "Draft a social media post (or a reply to a comment) for Thomas to approve. It is NOT posted: it lands in Approvals with a preview. Use whenever Thomas asks for posts, captions, slideshows or comment replies, and for scheduled content jobs like Bargie's weekly posts. Use only real numbers and facts. For a picture slideshow, give 3 to 10 slides, each with a short heading, the body text (the real price or fact) and which photo to use.",
+    description: "Draft a social media post (or a reply to a comment) for Thomas to approve. It is NOT posted: it waits for his OK with a preview, on his Dashboard and under your answer. Use whenever Thomas asks for posts, captions, slideshows or comment replies, and for scheduled content jobs like Bargie's weekly posts. Use only real numbers and facts. For a picture slideshow, give 3 to 10 slides, each with a short heading, the body text (the real price or fact) and which photo to use.",
     input_schema: {
       type: "object",
       properties: {
@@ -325,7 +325,7 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
   {
     name: "request_approval",
     description:
-      "Queue an action that needs Thomas's approval before it happens: signing up for a service, paying for anything, sending an email, redeploying, deleting things, or using his PC. It does NOT run now: it lands in his Approvals screen. Always include the cost in dollars (0 if free) and a clear reason. Never ask for or include card numbers or passwords. To control his PC (desktop apps or websites, e.g. to fill a signup form), request kind pc.session with the exact purpose; once he approves, your next turn gets desktop and browser tools for 2 hours. For purchases, prepare everything up to the payment step; Thomas pays himself.",
+      "Queue an action that needs Thomas's approval before it happens: signing up for a service, paying for anything, sending an email, redeploying, deleting things, or using his PC. It does NOT run now: it waits for his OK, shown on his Dashboard and under your answer in the chat. Always include the cost in dollars (0 if free) and a clear reason. Never ask for or include card numbers or passwords. To control his PC (desktop apps or websites, e.g. to fill a signup form), request kind pc.session with the exact purpose; once he approves, your next turn gets desktop and browser tools for 2 hours. For purchases, prepare everything up to the payment step; Thomas pays himself.",
     input_schema: {
       type: "object",
       properties: {
@@ -535,7 +535,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           reason: reply ? `Reply to: ${String(input.reply_to ?? "").slice(0, 200)}` : `${String(input.channel)}${input.post_at ? ` · suggested ${input.post_at}` : ""}`,
           payload: { channel: input.channel, caption: input.caption, hashtags: input.hashtags, slides: input.slides, reply_to: input.reply_to, post_at: input.post_at, sources: input.sources },
         });
-        return { label: `Drafted for your OK: ${input.title}`, result: `Draft is waiting in Approvals (${a.status}). Nothing was posted.` };
+        return { label: `Drafted for your OK: ${input.title}`, result: `Draft is waiting for his OK (${a.status}): its OK button is on his Dashboard and under your answer in the chat, so never tell him to go to Approvals. Nothing was posted.` };
       }
       case "draft_ad_campaign": {
         const p = await findProject(input.project_name as string);
@@ -552,7 +552,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         });
         if (a.status === "rejected") await db().from("campaigns").update({ status: "draft", notes: `Blocked: ${(a.result as { blocked?: string })?.blocked ?? "over a spend limit"}` }).eq("id", c.id);
         await did(`Drafted ad campaign “${input.name}”`, { op: "delete", table: "campaigns", id: c.id });
-        return { label: a.status === "rejected" ? `Ad drafted, but over your spend limit` : `Ad drafted, launch waiting for your OK`, result: a.status === "rejected" ? `Saved as a draft. The launch was blocked: ${JSON.stringify(a.result)}. Tell Thomas he can lower the budget or raise his limit in Settings.` : "Saved. The launch is waiting in Approvals. Nothing is live." };
+        return { label: a.status === "rejected" ? `Ad drafted, but over your spend limit` : `Ad drafted, launch waiting for your OK`, result: a.status === "rejected" ? `Saved as a draft. The launch was blocked: ${JSON.stringify(a.result)}. Tell Thomas he can lower the budget or raise his limit in Settings.` : "Saved. The launch is waiting for his OK: its OK button is on his Dashboard and under your answer in the chat, so never tell him to go to Approvals. Nothing is live." };
       }
       case "log_ad_results": {
         const { data: list } = await db().from("campaigns").select("id,name");
@@ -632,7 +632,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
             reason: `For "${String(input.goal).slice(0, 120)}": it edits files in ${workDir} on a separate branch, commits, and never pushes or deploys.`,
             payload: { mission_id: m.id, folder: workDir },
           });
-          coding = a.status === "pending" ? " Coding on his PC is waiting for his OK in Approvals." : "";
+          coding = a.status === "pending" ? " Coding on his PC is waiting for his OK: its OK button is on his Dashboard and under your answer in the chat, so never tell him to go to Approvals." : "";
         }
         await did(`Started supervising ${p.name}: ${String(input.goal).slice(0, 60)}`, { op: "update", table: "missions", id: m.id, values: { status: "stopped" } });
         return { label: `Supervising ${p.name}`, result: `Mission ${m.id} started with ${steps.length} steps. First check in about a minute, then every ${hours} hour(s). It shows on the Running screen.${coding}` };
@@ -716,7 +716,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
           title: `Push ${branch} (commit ${sha.slice(0, 7)}) to GitHub`,
           payload: { mission_id: m.id, dir: m.work_dir, branch, sha, changes: sum.log.slice(0, 1500) },
         });
-        return { label: "Asked you to push the work", result: `Waiting in Approvals (${a.status}). Once pushed, Thomas reviews and merges it on GitHub himself.` };
+        return { label: "Asked you to push the work", result: `Waiting for his OK (${a.status}): its OK button is on his Dashboard and under your answer in the chat, so never tell him to go to Approvals. Once pushed, Thomas reviews and merges it on GitHub himself.` };
       }
       case "answer_mission": {
         const { answerMission } = await import("@/lib/missions");
@@ -742,7 +742,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
             ? `Ran without asking because Thomas has approved this kind of action enough times (trust ladder). Status: ${a.status}. ${JSON.stringify(a.result ?? {})}`
             : a.status === "rejected"
             ? `Blocked automatically${blocked}. Tell Thomas and suggest a cheaper option or raising the cap.`
-            : "Queued in Thomas's Approvals screen. It will not happen until he approves. Do not wait for it; carry on with the rest.",
+            : "Queued for Thomas's OK: its OK button is on his Dashboard and under your answer in the chat, so never tell him to go to Approvals. It will not happen until he approves. Do not wait for it; carry on with the rest.",
         };
       }
       default:

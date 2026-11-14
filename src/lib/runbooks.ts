@@ -26,7 +26,7 @@ const isWin = process.platform === "win32";
 
 export type StepKind = "start_job" | "watch_process" | "stop_process" | "git_commit_push" | "delete_folder" | "open_link" | "handoff" | "run_command" | "auto";
 /** auto: a job MyManager knows how to do itself (going online). Only MyManager plans these, never the assistant. */
-export type AutoTask = "online_password" | "online_settings" | "online_deploy" | "online_switch";
+export type AutoTask = "online_password" | "online_schema" | "online_settings" | "online_deploy" | "online_switch";
 export interface Step {
   id: string;
   kind: StepKind;
@@ -296,9 +296,9 @@ async function needsOk(r: Runbook, s: Step, why: string) {
   if (s.note === "approved") return false;
   if (s.approval_id) { s.status = "waiting"; return true; }
   const a = await askApproval({ kind: "runbook.step", title: `${s.label}`, reason: `${why}\nPart of "${r.title}".`, project_id: r.project_id, payload: { runbook_id: r.id, step_id: s.id } });
-  s.approval_id = a.id; s.status = "waiting"; s.note = "Waiting for your OK in Approvals";
+  s.approval_id = a.id; s.status = "waiting"; s.note = "Waiting for your OK (the button is right here).";
   await logRunbook(r.id, `${s.label}: asked for your OK.`);
-  void notify(`✋ **${r.title}** needs your OK for: ${s.label}. It's in Approvals.`);
+  void notify(`✋ **${r.title}** needs your OK for: ${s.label}. The OK button is on your Dashboard.`);
   return true;
 }
 
@@ -435,10 +435,11 @@ async function doStep(r: Runbook, s: Step) {
           void notify(`🔑 **${r.title}**: choose your own MyManager password on the card, then I'll carry on by myself.`);
           return;
         }
-        if (!s.ref) { s.status = "failed"; s.note = "I don't know which database this is for."; break; }
-        if (s.task === "online_settings") s.note = await o.setOnlineSettings(s.ref);
+        if (!s.ref && s.task !== "online_deploy") { s.status = "failed"; s.note = "I don't know which database this is for."; break; }
+        if (s.task === "online_schema") s.note = await o.setOnlineSchema(s.ref!);
+        else if (s.task === "online_settings") s.note = await o.setOnlineSettings(s.ref!);
         else if (s.task === "online_deploy") { const d = await o.deployOnline(); s.note = d.note; s.url = d.url; }
-        else if (s.task === "online_switch") s.note = await o.switchPcToOnline(s.ref);
+        else if (s.task === "online_switch") s.note = await o.switchPcToOnline(s.ref!);
         s.status = "done";
         break;
       }
@@ -543,7 +544,7 @@ async function lookInto(runbookId: string, title: string, b: Step) {
   const startedAt = new Date().toISOString();
   try {
     const { runAgent } = await import("@/lib/agent/run");
-    const goal = `A step failed in the runbook "${title}" (id ${runbookId}) on Thomas's PC, and nothing has been said to him yet. Step: "${b.label}" (${b.kind}${b.command ? `: ${b.command}` : ""}). What it said: ${b.error ?? b.note ?? "nothing"}. Work out why with read-only checks on his PC, then sort it out yourself if you can (for example draft a corrected runbook with draft_runbook; it goes to Approvals). Only involve him for something only he can do (confirm a sign-in, approve an install or a cost), and name that one thing. Never say just "this step didn't work". End with one or two plain lines for him.`;
+    const goal = `A step failed in the runbook "${title}" (id ${runbookId}) on Thomas's PC, and nothing has been said to him yet. Step: "${b.label}" (${b.kind}${b.command ? `: ${b.command}` : ""}). What it said: ${b.error ?? b.note ?? "nothing"}. Work out why with read-only checks on his PC, then sort it out yourself if you can (for example draft a corrected runbook with draft_runbook; its OK button shows on his job card and Dashboard, so never tell him to go to Approvals). Only involve him for something only he can do (confirm a sign-in, approve an install or a cost), and name that one thing. Never say just "this step didn't work". End with one or two plain lines for him.`;
     await runAgent(goal, (e) => { if (e.type === "done") summary = e.summary; }, undefined, { kind: "job" });
   } catch { /* fall through to telling him */ }
   const { data } = await db().from("runbooks").select("*").eq("id", runbookId).maybeSingle();
@@ -717,6 +718,7 @@ export function ensureLoop() {
 export async function runDueRunbooks() {
   await retryAfterSignIn().catch(() => {});
   await closeOlderTwins().catch(() => {});
+  await dropSignInPlansNoLongerNeeded().catch(() => {});
   const { data } = await db().from("runbooks").select("id,status").in("status", ["running", "waiting"]);
   for (const r of (data ?? []) as { id: string }[]) await advance(r.id);
   if ((data ?? []).length) ensureLoop();
@@ -765,6 +767,46 @@ async function retryAfterSignIn() {
     await save(r, { status: "running", finished_at: null, last_update: "Trying the failed steps again now the sign-in works" }, true);
     await logRunbook(r.id, "Sign-in works again, so I'm running the failed steps again.");
     void advance(r.id);
+  }
+}
+
+/**
+ * A plan that's only "sign MyManager in to X" (plus read-only checks) and is still waiting for his OK isn't needed
+ * once MyManager is signed in to X again (it often comes back by itself, or another plan did it). Close it, with its
+ * card, instead of asking him to approve a sign-in that already works. Plans that name a particular account stay,
+ * since being signed in doesn't say it's the right account.
+ */
+let lastSignInLook = 0;
+async function dropSignInPlansNoLongerNeeded() {
+  if (Date.now() - lastSignInLook < 5 * 60_000) return;
+  lastSignInLook = Date.now();
+  const { data } = await db().from("runbooks").select("*").eq("status", "queued");
+  const ok = new Map<string, boolean | null>();
+  for (const r of (data ?? []) as Runbook[]) {
+    const steps = r.steps?.list ?? [];
+    const words = `${r.title} ${steps.map((x) => `${x.label} ${x.text ?? ""}`).join(" ")}`;
+    if (/@|\baccount (that|which|for|with)\b|\bright account\b|\bother account\b/i.test(words)) continue;
+    const logins = steps.map((x) => (x.kind === "handoff" ? x.command ?? signInCommandFor(x.label, x.text) : x.kind === "run_command" && isLoginCommand(x.command ?? "") ? x.command : null));
+    const rest = steps.filter((x, i) => !logins[i] && !(x.kind === "run_command" && isReadOnlyCommand(x.command ?? "")));
+    const cmds = logins.filter(Boolean) as string[];
+    if (!cmds.length || rest.length) continue;
+    let all = true;
+    for (const c of cmds) {
+      const svc = signInService(c) ?? c;
+      if (!ok.has(svc)) ok.set(svc, await checkSignIn(c));
+      if (ok.get(svc) !== true) all = false;
+    }
+    if (!all) continue;
+    const names = [...new Set(cmds.map((c) => signInService(c)).filter(Boolean))].join(" and ");
+    const note = `Not needed any more: MyManager is already signed in to ${names || "it"}.`;
+    // take its card away first: if he pressed OK at that very moment, his OK wins and the plan runs (and finds it signed in)
+    if (r.steps.approval_id) {
+      const { data: gone } = await db().from("actions").update({ status: "rejected", decided_at: now(), result: { not_needed: note } }).eq("id", r.steps.approval_id).eq("status", "pending").select("id");
+      if (!(gone ?? []).length) continue;
+    }
+    for (const x of steps) { x.status = "skipped"; x.note = note; }
+    await db().from("runbooks").update({ steps: r.steps, status: "done", finished_at: now(), last_update: note }).eq("id", r.id).eq("status", "queued");
+    await logRunbook(r.id, note);
   }
 }
 
