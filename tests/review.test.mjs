@@ -292,7 +292,7 @@ test("a sandboxed check can't read home, write outside its copy or reach other s
   assert.match(g(repo, "log", "--oneline", "mymanager/t1").stdout, /sandboxed/);
 });
 
-test("the readiness check names exactly the sandbox tools that are missing", () => {
+test("the readiness check names exactly the sandbox tools that are missing", { skip: process.platform === "win32" && "native mode is Linux/macOS only (Windows uses WSL)" }, () => {
   const env = { CODER_SANDBOX: "native", PATH: "/usr/bin:/bin", HOME: os.tmpdir() };
   const missing = ["claude", "bwrap", "socat", "srt", "rg", "git", "node"].filter((t) => spawnSync("bash", ["-lc", `command -v ${t}`], { env }).status !== 0);
   const r = sbEval(`import { sandboxProblem } from "./src/lib/sandbox.ts"; console.log(JSON.stringify(await sandboxProblem()));`, env);
