@@ -514,6 +514,7 @@ function recoverStep(list: Step[], b: Step): string | null {
 /** Ask the assistant to work out a failed step and sort it, then put what it found on the step. */
 async function lookInto(runbookId: string, title: string, b: Step) {
   let summary = "";
+  const startedAt = new Date().toISOString();
   try {
     const { runAgent } = await import("@/lib/agent/run");
     const goal = `A step failed in the runbook "${title}" (id ${runbookId}) on Thomas's PC, and nothing has been said to him yet. Step: "${b.label}" (${b.kind}${b.command ? `: ${b.command}` : ""}). What it said: ${b.error ?? b.note ?? "nothing"}. Work out why with read-only checks on his PC, then sort it out yourself if you can (for example draft a corrected runbook with draft_runbook; it goes to Approvals). Only involve him for something only he can do (confirm a sign-in, approve an install or a cost), and name that one thing. Never say just "this step didn't work". End with one or two plain lines for him.`;
@@ -524,6 +525,19 @@ async function lookInto(runbookId: string, title: string, b: Step) {
   const s = r?.steps.list.find((x) => x.id === b.id);
   if (!r || !s || !s.fixing) return;
   s.fixing = false;
+  // Did the assistant start a new runbook to sort it out? Then that one carries on, and this step is closed, not left asking him.
+  let q = db().from("runbooks").select("id,title,status").gte("created_at", startedAt).neq("id", runbookId);
+  q = r.project_id ? q.eq("project_id", r.project_id) : q.is("project_id", null);
+  const { data: newer } = await q;
+  const handover = ((newer ?? []) as { id: string; title: string; status: string }[]).find((x) => x.status !== "stopped");
+  if (handover) {
+    s.status = "skipped"; s.finished_at = now();
+    s.note = `Handed over to "${handover.title}", which I started to sort this out${handover.status === "queued" ? " (it's waiting for your OK)" : ""}.`;
+    await save(r, { status: "running", last_update: s.note });
+    await logRunbook(runbookId, s.note);
+    void advance(runbookId);
+    return;
+  }
   s.note = summary ? summary.slice(0, 600) : `${s.note ?? "It didn't work."} I couldn't work out a way around it by myself.`;
   await save(r, { status: "waiting", last_update: `Stuck at: ${s.label}` });
   void notify(`⚠️ **${r.title}**: "${s.label}". ${s.note}`);
