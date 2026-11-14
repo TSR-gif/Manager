@@ -1,7 +1,8 @@
 import "server-only";
 import { commandProblem, isLoginCommand, isReadOnlyCommand } from "@/lib/command-safety.mjs";
 import { checkSignIn, signInService } from "@/lib/services";
-import { planVercelLink } from "@/lib/vercel-link";
+import { planVercelLink, writeVercelLink } from "@/lib/vercel-link";
+import { needsSignIn, plainFailure, plainSuccess, serviceOf, signInCommandFor } from "@/lib/step-words";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -23,7 +24,9 @@ import { nextMove } from "@/lib/runbook-order.mjs";
 const run = promisify(execFile);
 const isWin = process.platform === "win32";
 
-export type StepKind = "start_job" | "watch_process" | "stop_process" | "git_commit_push" | "delete_folder" | "open_link" | "handoff" | "run_command";
+export type StepKind = "start_job" | "watch_process" | "stop_process" | "git_commit_push" | "delete_folder" | "open_link" | "handoff" | "run_command" | "auto";
+/** auto: a job MyManager knows how to do itself (going online). Only MyManager plans these, never the assistant. */
+export type AutoTask = "online_password" | "online_settings" | "online_deploy" | "online_switch";
 export interface Step {
   id: string;
   kind: StepKind;
@@ -41,6 +44,10 @@ export interface Step {
   path?: string;
   /** open_link / handoff */
   url?: string; text?: string;
+  /** auto: which job, and the Supabase database it's for */
+  task?: AutoTask; ref?: string;
+  /** a step waiting on something he types on the card itself (his new password) */
+  form?: "password";
   /** handoff: false = doesn't hold up the rest (e.g. "sign in if asked") */
   blocking?: boolean;
   /** start_job / watch_process: true = later steps don't wait for this job to finish. By default they wait. */
@@ -50,8 +57,10 @@ export interface Step {
   outcome?: "finished" | "failed" | "interrupted" | "not_found" | "unverified";
   /** run_command: the tool's own last words when it failed (the note is the plain version) */
   error?: string;
+  /** run_command: the tool's own last lines when it worked. Kept for MyManager; the screens show the note. */
+  output?: string;
   /** recovery already tried for this step, so it isn't tried twice: sign-in added, the assistant asked to look */
-  tried?: ("signin" | "assistant")[];
+  tried?: ("signin" | "assistant" | "rerun")[];
   /** the assistant is looking into why it failed; it stays off his Needs you list until that's done */
   fixing?: boolean;
   status: "todo" | "running" | "waiting" | "done" | "skipped" | "failed";
@@ -63,7 +72,7 @@ export interface Step {
 export interface Runbook {
   id: string; project_id: string | null; title: string; work_dir: string | null;
   status: "draft" | "queued" | "running" | "waiting" | "done" | "stopped" | "failed";
-  steps: { list: Step[] }; last_update: string | null; created_at: string; started_at: string | null; finished_at: string | null;
+  steps: { list: Step[]; approval_id?: string }; last_update: string | null; created_at: string; started_at: string | null; finished_at: string | null;
 }
 
 const LOG_DIR = path.join(process.cwd(), ".localdb-logs");
@@ -133,12 +142,14 @@ export function stepSummary(s: Step) {
     case "open_link": return `Open ${s.url} for you${opt}`;
     case "handoff": return `Hand over to you: ${s.text ?? s.label}${s.command ? ` (opens a window running \`${s.command}\`)` : ""}${s.blocking === false ? " (only if needed)" : ""}`;
     case "run_command": return `Run \`${s.command}\`${isReadOnlyCommand(s.command) ? "" : " (asks you again first)"}${opt}`;
+    case "auto": return s.label;
   }
 }
 
 /** Make a draft and put "run it" in Approvals. */
-export async function draftRunbook(input: { project_id: string | null; work_dir: string | null; title: string; steps: Omit<Step, "id" | "status">[] }) {
+export async function draftRunbook(input: { project_id: string | null; work_dir: string | null; title: string; steps: Omit<Step, "id" | "status">[] }, builtIn = false) {
   const steps: Step[] = input.steps.map((s, i) => ({ ...s, id: `s${i + 1}`, status: "todo" }));
+  if (!builtIn && steps.some((s) => s.kind === "auto" || s.form)) return { ok: false as const, problems: ["auto steps are MyManager's own; plan with the other step kinds."] };
   const problems = checkSteps(steps, input.work_dir);
   if (problems.length) return { ok: false as const, problems };
   const { data: r } = await db().from("runbooks").insert({ project_id: input.project_id, title: input.title, work_dir: input.work_dir, steps: { list: steps }, status: "queued", last_update: "Waiting for your OK" }).select().single();
@@ -146,6 +157,8 @@ export async function draftRunbook(input: { project_id: string | null; work_dir:
     kind: "runbook.run", title: `Run on your PC: ${input.title}`, project_id: input.project_id,
     reason: steps.map((s, i) => `${i + 1}. ${stepSummary(s)}`).join("\n"), payload: { runbook_id: r.id, folder: input.work_dir },
   });
+  // so the job's own card can carry the OK button, instead of sending him to Approvals
+  await db().from("runbooks").update({ steps: { list: steps, approval_id: a.id } }).eq("id", r.id);
   return { ok: true as const, id: r.id as string, action: a.id };
 }
 
@@ -179,6 +192,8 @@ export async function resolveStep(id: string, stepId: string, outcome: "done" | 
   const s = r?.steps.list.find((x) => x.id === stepId);
   if (!r || !s) return;
   if (!["running", "waiting"].includes(r.status)) return; // stopped or finished: nothing more happens
+  // an OK (or no) only counts for a step still waiting on it, not one that was closed or handed over meanwhile
+  if ((outcome === "approved" || outcome === "rejected") && s.status !== "waiting") return;
   const verified = outcome === "done" && s.kind === "handoff" && s.command ? await checkSignIn(s.command) : null;
   if (outcome === "approved") { s.status = "todo"; s.note = "approved"; }
   else if (outcome === "rejected") { s.status = "skipped"; s.note = "You said no, so I skipped it."; s.finished_at = now(); }
@@ -201,6 +216,7 @@ const isJob = (s: Step) => s.kind === "start_job" || s.kind === "watch_process";
  *  Steps run in order and each waits for the one before it: a step that failed stops the ones after it (Thomas can
  *  try it again, skip it, or stop), and a running job holds up the next step unless it was marked independent. */
 export async function advance(id: string): Promise<void> {
+  if (process.env.VERCEL) return; // online, MyManager only records the decision; the PC's own loop does the steps
   if (advancing.has(id)) return;
   advancing.add(id);
   try {
@@ -385,6 +401,8 @@ async function doStep(r: Runbook, s: Step) {
         break;
       }
       case "handoff": {
+        // a sign-in planned without its command still gets checked and opened for him, not ticked on trust
+        if (!s.command) { const c = signInCommandFor(s.label, s.text); if (c) s.command = c; }
         if (s.command && isLoginCommand(s.command)) {
           // a sign-in: don't ask him for one that already works, and don't send him looking for a window that never opened
           const service = signInService(s.command) ?? "it";
@@ -392,7 +410,7 @@ async function doStep(r: Runbook, s: Step) {
           const way = await openSignIn(s.command, dir || os.homedir(), s.label);
           if (way.link) s.url = way.link;
           s.status = "waiting";
-          s.note = way.how === "window" ? `A ${service} sign-in window is open on your PC. Finish it there; I'll notice by myself when it works.`
+          s.note = way.how === "window" ? `A ${service} sign-in window is open on your PC. It opens your browser: confirm there${service === "Supabase" ? ", then type the code the page shows into that window" : ""}. I'll notice by myself when it works.`
             : way.how === "link" ? `The sign-in window wouldn't open, so I opened the ${service} sign-in page in your browser instead. Confirm it there; I'll notice by myself when it works.`
             : `I couldn't open a ${service} sign-in on your PC (${way.why}). Ask me to try another way, or press Not needed.`;
           void notify(`🙋 **${r.title}**: ${s.note}${s.url ? `\n${s.url}` : ""}`);
@@ -407,21 +425,37 @@ async function doStep(r: Runbook, s: Step) {
         await logRunbook(r.id, `Handed over to Thomas: ${s.label}`);
         return;
       }
+      case "auto": {
+        const o = await import("@/lib/online");
+        if (s.task === "online_password") {
+          const bad = o.passwordProblem();
+          if (!bad) { s.status = "done"; s.note = "Your password is your own, so it's fine to use online."; break; }
+          s.status = "waiting"; s.form = "password"; s.blocking = true;
+          s.note = `${bad} Online, anyone can reach the login page, so choose your own (10 or more characters) right here. It's kept on your PC and on your Vercel project, never shown anywhere.`;
+          void notify(`🔑 **${r.title}**: choose your own MyManager password on the card, then I'll carry on by myself.`);
+          return;
+        }
+        if (!s.ref) { s.status = "failed"; s.note = "I don't know which database this is for."; break; }
+        if (s.task === "online_settings") s.note = await o.setOnlineSettings(s.ref);
+        else if (s.task === "online_deploy") { const d = await o.deployOnline(); s.note = d.note; s.url = d.url; }
+        else if (s.task === "online_switch") s.note = await o.switchPcToOnline(s.ref);
+        s.status = "done";
+        break;
+      }
       case "run_command": {
         let c = (s.command ?? "").trim();
         // `vercel link`: only ever to his existing project, named and checked; never a new one; skip if already linked
         const link = await planVercelLink(c, dir || os.homedir(), r.project_id);
         if (link.kind === "already") { s.status = "done"; s.finished_at = now(); s.note = link.note; break; }
-        if (link.kind === "refuse") { s.status = "failed"; s.note = link.note; await logRunbook(r.id, link.note); break; }
-        if (link.kind === "run") c = link.command;
+        if (link.kind === "refuse") { s.status = "failed"; s.note = link.note; s.error = link.error; await logRunbook(r.id, link.note); break; }
+        if (link.kind === "write") { writeVercelLink(dir || os.homedir(), link.project); s.status = "done"; s.finished_at = now(); s.note = link.note; s.error = undefined; break; }
         const bad = commandProblem(c);
         if (bad) {
           s.status = "failed"; s.note = `Not run: ${bad}`;
           await logRunbook(r.id, `Refused to run \`${c}\`: ${bad}`);
           break;
         }
-        // linking to a project that's already on Vercel only writes a .vercel folder here, so it doesn't need asking
-        if (link.kind !== "run" && !isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
+        if (!isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
         if (!(await stillOn(r.id))) { s.status = "skipped"; s.note = "Stopped before it ran."; break; }
         // Windows: hand cmd the line exactly as written (what Node's own shell option does). Letting Node quote it
         // turns any "quoted words" into \"…\", which cmd doesn't understand.
@@ -433,9 +467,12 @@ async function doStep(r: Runbook, s: Step) {
           const viaNpx = await exec(`npx --no-install ${c}`);
           if (viaNpx.ok || !/not recognized|missing packages|not found/i.test(viaNpx.text)) { out = viaNpx; c = `npx --no-install ${c}`; s.command = c; }
         }
-        s.status = out.ok ? "done" : "failed";
-        if (out.ok) { s.note = link.kind === "run" ? link.note : out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600) || "Done."; s.error = undefined; }
-        else { s.error = out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600); s.note = plainFailure(c, out.text); }
+        // A check that "worked" but whose own words say it didn't (e.g. "Logged out") counts as failed.
+        const said = out.text.trim().split(/\r?\n/).slice(-8).join("\n").slice(0, 800);
+        const ok = out.ok && !(serviceOf(c) && needsSignIn(out.text));
+        s.status = ok ? "done" : "failed";
+        if (ok) { s.note = plainSuccess(c, out.text); s.output = said; s.error = undefined; }
+        else { s.error = said; s.note = plainFailure(c, out.text); }
         break;
       }
     }
@@ -485,23 +522,12 @@ async function workAround(r: Runbook, b: Step): Promise<"retry" | "looking" | nu
   return "looking";
 }
 
-/** What went wrong, in plain words, from a command's own output. */
-function plainFailure(command: string, text: string) {
-  const svc = /\bvercel\b/i.test(command) ? "Vercel" : /\bsupabase\b/i.test(command) ? "Supabase" : /\bgh\b/i.test(command) ? "GitHub" : null;
-  if (svc && needsSignIn(text)) return `MyManager isn't signed in to ${svc} on this PC (that's separate from your browser).`;
-  if (/not recognized|command not found|ENOENT|missing packages/i.test(text)) return `The program this needs isn't installed on this PC (\`${command.split(/\s+/).filter((w) => !/^(npx|--no-install|-y)$/.test(w))[0]}\`).`;
-  if (/ENOTFOUND|getaddrinfo|ECONNRESET|ETIMEDOUT|network/i.test(text)) return "It couldn't reach the internet from this PC.";
-  if (/EACCES|EPERM|access is denied/i.test(text)) return "Windows didn't allow it (access denied).";
-  const last = text.trim().split(/\r?\n/).map((x) => x.replace(/^[>\s]+/, "").trim()).filter((x) => x && !/^Vercel CLI \d/i.test(x)).pop();
-  return last ? `It stopped with: "${last.slice(0, 200)}"` : "It stopped without saying why.";
-}
-const needsSignIn = (t: string) => /logged out|no existing credentials|not logged in|vercel login|token is not valid|invalid token|access token not provided|supabase login|gh auth login|not authenticated/i.test(t);
-
 /** A route around a failed step that MyManager can take by itself. Returns what it's doing, or null. */
 function recoverStep(list: Step[], b: Step): string | null {
   const text = `${b.error ?? ""} ${b.note ?? ""}`;
-  const svc = /\bvercel\b/i.test(b.command ?? "") ? "Vercel" : /\bsupabase\b/i.test(b.command ?? "") ? "Supabase" : null;
-  if (b.kind === "run_command" && svc && needsSignIn(text) && !(b.tried ?? []).includes("signin")) {
+  const auto = b.kind === "auto" ? b.note?.match(/isn't signed in to (Vercel|Supabase)/)?.[1] ?? null : null;
+  const svc = auto ?? (/\bvercel\b/i.test(b.command ?? "") ? "Vercel" : /\bsupabase\b/i.test(b.command ?? "") ? "Supabase" : null);
+  if ((b.kind === "run_command" || auto) && svc && (auto || needsSignIn(text)) && !(b.tried ?? []).includes("signin")) {
     b.tried = [...(b.tried ?? []), "signin"];
     const signin: Step = { id: `${b.id}-signin`, kind: "handoff", label: `Sign MyManager in to ${svc}`, text: `Confirm the ${svc} sign-in so MyManager can carry on.`, command: svc === "Vercel" ? "npx vercel login" : "npx supabase login", status: "todo", blocking: true };
     if (!list.some((x) => x.id === signin.id)) list.splice(list.indexOf(b), 0, signin);
@@ -514,6 +540,7 @@ function recoverStep(list: Step[], b: Step): string | null {
 /** Ask the assistant to work out a failed step and sort it, then put what it found on the step. */
 async function lookInto(runbookId: string, title: string, b: Step) {
   let summary = "";
+  const startedAt = new Date().toISOString();
   try {
     const { runAgent } = await import("@/lib/agent/run");
     const goal = `A step failed in the runbook "${title}" (id ${runbookId}) on Thomas's PC, and nothing has been said to him yet. Step: "${b.label}" (${b.kind}${b.command ? `: ${b.command}` : ""}). What it said: ${b.error ?? b.note ?? "nothing"}. Work out why with read-only checks on his PC, then sort it out yourself if you can (for example draft a corrected runbook with draft_runbook; it goes to Approvals). Only involve him for something only he can do (confirm a sign-in, approve an install or a cost), and name that one thing. Never say just "this step didn't work". End with one or two plain lines for him.`;
@@ -524,6 +551,16 @@ async function lookInto(runbookId: string, title: string, b: Step) {
   const s = r?.steps.list.find((x) => x.id === b.id);
   if (!r || !s || !s.fixing) return;
   s.fixing = false;
+  // Did the assistant start a new runbook to sort it out? Then that one carries on, and this step is closed, not left asking him.
+  let q = db().from("runbooks").select("id,title,status").gte("created_at", startedAt).neq("id", runbookId);
+  q = r.project_id ? q.eq("project_id", r.project_id) : q.is("project_id", null);
+  const { data: newer } = await q;
+  const handover = ((newer ?? []) as { id: string; title: string; status: string }[]).find((x) => x.status !== "stopped");
+  if (handover) {
+    const note = `Handed over to "${handover.title}", which I started to sort this out${handover.status === "queued" ? " (it's waiting for your OK)" : ""}.`;
+    if (await handOver(r, s, note)) await logRunbook(runbookId, note);
+    return;
+  }
   s.note = summary ? summary.slice(0, 600) : `${s.note ?? "It didn't work."} I couldn't work out a way around it by myself.`;
   await save(r, { status: "waiting", last_update: `Stuck at: ${s.label}` });
   void notify(`⚠️ **${r.title}**: "${s.label}". ${s.note}`);
@@ -678,9 +715,77 @@ export function ensureLoop() {
 }
 
 export async function runDueRunbooks() {
+  await retryAfterSignIn().catch(() => {});
+  await closeOlderTwins().catch(() => {});
   const { data } = await db().from("runbooks").select("id,status").in("status", ["running", "waiting"]);
   for (const r of (data ?? []) as { id: string }[]) await advance(r.id);
   if ((data ?? []).length) ensureLoop();
+}
+
+/**
+ * A newer job took over from step s. The steps after s depended on it, so they don't run here either (the newer job
+ * carries on instead): they're closed with the same note, and this job ends, apart from any job it's still watching.
+ */
+async function handOver(r: Runbook, s: Step, note: string) {
+  const at = r.steps.list.indexOf(s);
+  for (const x of r.steps.list.slice(at)) {
+    if (!["todo", "waiting", "failed"].includes(x.status)) continue;
+    // its OK card, if it was waiting on one, goes too
+    if (x.approval_id) await db().from("actions").update({ status: "rejected", decided_at: now(), result: { handed_over: note } }).eq("id", x.approval_id).eq("status", "pending");
+    x.status = "skipped"; x.finished_at = now(); x.approval_id = undefined; x.fixing = false;
+    x.note = x === s ? note : `Not run here: ${note}`;
+  }
+  const watching = r.steps.list.some((x) => isJob(x) && x.status === "running");
+  return save(r, watching ? { status: "running", last_update: note } : { status: "done", finished_at: now(), last_update: note });
+}
+
+/**
+ * A job that finished with problems only because a sign-in had dropped shouldn't sit there for him to read once
+ * the sign-in works again: MyManager runs the failed steps again by itself (once), at most every 5 minutes.
+ */
+let lastRetryLook = 0;
+async function retryAfterSignIn() {
+  if (Date.now() - lastRetryLook < 5 * 60_000) return;
+  lastRetryLook = Date.now();
+  const since = new Date(Date.now() - 2 * 86400_000).toISOString();
+  const { data } = await db().from("runbooks").select("*").eq("status", "failed").gte("created_at", since);
+  const ok = new Map<string, boolean | null>();
+  for (const r of (data ?? []) as Runbook[]) {
+    const failed = r.steps.list.filter((x) => x.status === "failed" && !x.optional);
+    if (!failed.length || failed.some((x) => (x.tried ?? []).includes("rerun"))) continue;
+    const svcs = failed.map((x) => (x.kind === "run_command" && needsSignIn(`${x.error ?? ""} ${x.note ?? ""}`) ? serviceOf(x.command ?? "") : null));
+    if (svcs.some((v) => !v)) continue; // something other than a sign-in went wrong: that stays for the assistant
+    let all = true;
+    for (const v of new Set(svcs as string[])) {
+      if (!ok.has(v)) ok.set(v, await checkSignIn(v === "Vercel" ? "vercel login" : v === "Supabase" ? "supabase login" : "gh auth login"));
+      if (!ok.get(v)) all = false;
+    }
+    if (!all) continue;
+    for (const x of failed) { x.status = "todo"; x.tried = [...(x.tried ?? []), "rerun"]; x.note = `Trying again now that MyManager is signed in to ${serviceOf(x.command ?? "")}.`; x.finished_at = undefined; }
+    await save(r, { status: "running", finished_at: null, last_update: "Trying the failed steps again now the sign-in works" }, true);
+    await logRunbook(r.id, "Sign-in works again, so I'm running the failed steps again.");
+    void advance(r.id);
+  }
+}
+
+/**
+ * One card per job: when a newer job for the same project waits on the same step (a retry, or the assistant's
+ * replacement plan), the older one hands over to it instead of asking him the same thing twice.
+ */
+const sameStep = (t: string) => t.toLowerCase().replace(/\bmymanager\b|\bmanager\b/g, "").replace(/[^a-z]/g, "");
+async function closeOlderTwins() {
+  const { data } = await db().from("runbooks").select("*").in("status", ["running", "waiting", "queued"]).order("created_at");
+  const list = (data ?? []) as Runbook[];
+  for (const [i, old] of list.entries()) {
+    if (old.status === "queued") continue;
+    for (const s of old.steps.list.filter((x) => x.status === "waiting" && !x.fixing)) {
+      const newer = list.slice(i + 1).find((n) => n.project_id === old.project_id && n.steps.list.some((x) => sameStep(x.label) === sameStep(s.label) && ["todo", "waiting", "running"].includes(x.status)));
+      if (!newer) continue;
+      const note = `Handed over to "${newer.title}", which does the same thing.`;
+      if (await handOver(old, s, note)) await logRunbook(old.id, note);
+      break;
+    }
+  }
 }
 
 /** Watch something Thomas started himself. Read-only (plus keeping the PC awake), so it starts straight away, no approval. */

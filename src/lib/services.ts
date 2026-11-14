@@ -47,8 +47,8 @@ export async function findServices(): Promise<string> {
     if (has("requirements.txt") || has("pyproject.toml")) found.push("Python");
     lines.push(`- ${r.folder} (${r.dir})${r.remote ? `, GitHub ${r.remote}` : ""}: ${found.join(", ") || "no online services found"}`);
   }
-  const tools = await signIns();
-  return `# Project folders on this PC (${repos.length})\n${lines.join("\n") || "None found."}\n\n# MyManager's own sign-ins on this PC\nThese are the command-line tools MyManager uses. They are separate from Thomas's browser: being signed in on Chrome doesn't sign these in. Say so when you tell him one is signed out.\n${tools.join("\n")}\n\nTo sign in to a service, plan a handoff step in draft_runbook with the command (e.g. "npx vercel login", "npx supabase login"): it opens a window and Thomas finishes the sign-in himself.`;
+  const [tools, accounts] = await Promise.all([signIns(), import("@/lib/accounts").then((m) => m.accountCheck().then(m.accountReport)).catch(() => "Couldn't check.")]);
+  return `# Project folders on this PC (${repos.length})\n${lines.join("\n") || "None found."}\n\n# MyManager's own sign-ins on this PC\nThese are the command-line tools MyManager uses. They are separate from Thomas's browser: being signed in on Chrome doesn't sign these in. Say so when you tell him one is signed out.\n${tools.join("\n")}\n\n# Which accounts each project uses, checked against those sign-ins\nWhen a line says PROBLEM, tell him which account is missing in one plain line and plan the one sign-in that fixes it. Supabase's tool holds one sign-in at a time: if his projects are spread over two Supabase accounts, the best fix is inviting the signed-in account as a member of the other account's organisation (free, nothing stored), not switching back and forth.\n${accounts}\n\nTo sign in to a service, plan a handoff step in draft_runbook with the command (e.g. "npx vercel login", "npx supabase login"): it opens a window and Thomas finishes the sign-in himself.`;
 }
 
 // (the Vercel CLI prints a "Vercel CLI 65.x" banner on stderr, which lands after the answer)

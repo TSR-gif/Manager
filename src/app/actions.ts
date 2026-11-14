@@ -746,3 +746,38 @@ export async function openChat(id: string) {
   if (r.unread) await db().from("agent_runs").update({ unread: false }).eq("id", r.id);
   return { id: r.id, goal: r.goal, running, events: r.events ?? [] };
 }
+
+export type ChatApproval = { id: string; title: string; reason: string | null; cost_cents: number; kind: string };
+/** What this conversation asked his OK for and is still waiting on, so the OK button sits in the chat where he asked. */
+export async function chatApprovals(runId: string): Promise<ChatApproval[]> {
+  await requireAuth();
+  const { data: run } = await db().from("agent_runs").select("created_at").eq("id", runId).maybeSingle();
+  if (!run) return [];
+  const { data } = await db().from("actions").select("id,title,reason,cost_cents,kind,requested_by,created_at").eq("status", "pending").gte("created_at", (run as { created_at: string }).created_at).order("created_at");
+  return ((data ?? []) as (ChatApproval & { requested_by: string })[]).filter((a) => a.requested_by === "agent").map(({ id, title, reason, cost_cents, kind }) => ({ id, title, reason, cost_cents, kind }));
+}
+
+/** OK or Not now from a card in the chat. */
+export async function decideFromChat(id: string, approve: boolean) {
+  await requireAuth();
+  await q.decideAction(id, approve);
+  revalidatePath("/", "layout");
+}
+
+/** His own new password, typed on the card. Saved in .env.local on the PC; signs every browser out, so he logs in again. */
+export async function setPasswordForStep(form: FormData) {
+  await requireAuth();
+  const id = str(form, "id"), step = str(form, "step");
+  const pw = (form.get("password") as string | null) ?? "", again = (form.get("again") as string | null) ?? "";
+  const { passwordProblem } = await import("@/lib/online");
+  const back = (why: string) => redirect(`/?pw=${encodeURIComponent(why)}#needs`);
+  if (pw !== again) back("The two passwords didn't match.");
+  const bad = passwordProblem(pw);
+  if (bad) back(bad.replace("Your MyManager password is", "That password is"));
+  if (/[\r\n]/.test(pw)) back("That password has a line break in it.");
+  const { isLocal, setLocalEnv } = await import("@/lib/local-env");
+  if (!isLocal()) back("Change it on your PC's MyManager; the online one copies it from there.");
+  setLocalEnv("APP_PASSWORD", pw);
+  if (id && step) { const { resolveStep } = await import("@/lib/runbooks"); await resolveStep(id, step, "done"); }
+  redirect("/login?changed=1");
+}

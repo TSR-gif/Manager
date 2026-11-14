@@ -31,7 +31,7 @@ export default async function Review() {
   const byProject = (id: string | null) => done.filter((t) => t.project_id === id).length;
   const maxDone = Math.max(1, ...active.map((p) => byProject(p.id)), byProject(null));
   const { data: usageRows } = await db().from("usage_events").select("path,device,seconds").gte("created_at", since);
-  const SCREEN: Record<string, string> = { "/": "Today", "/agent": "Assistant", "/projects": "Projects", "/money": "Money", "/approvals": "Approvals", "/inbox": "Ideas", "/review": "Weekly review", "/me": "About you", "/settings": "Settings", "/more": "More" };
+  const SCREEN: Record<string, string> = { "/": "Dashboard", "/agent": "Assistant", "/projects": "Projects", "/money": "Money", "/approvals": "Approvals", "/inbox": "Ideas", "/review": "Weekly review", "/me": "About you", "/settings": "Settings", "/more": "More" };
   const screenOf = (path: string) => SCREEN["/" + (path.split("/")[1] ?? "")] ?? "Other";
   const usage = new Map<string, { phone: number; desktop: number; secs: number }>();
   for (const u of (usageRows ?? []) as { path: string; device: string; seconds: number }[]) {

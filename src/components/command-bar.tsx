@@ -8,7 +8,7 @@ import { MORE_ITEMS } from "@/components/nav";
 type Option = { id: string; label: string; hint?: string; icon: React.ComponentType<{ size?: number; className?: string }>; run: () => void };
 
 const PAGES = [
-  { href: "/", label: "Today", icon: CalendarCheck },
+  { href: "/", label: "Dashboard", icon: CalendarCheck },
   { href: "/agent", label: "Assistant", icon: Sparkles },
   { href: "/helpers", label: "Helpers", icon: FolderKanban },
   { href: "/calendar", label: "Calendar", icon: CalendarCheck },
