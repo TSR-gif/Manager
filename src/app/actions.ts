@@ -466,7 +466,8 @@ export async function undoActivity(form: FormData) {
 
 /** Private usage log: which screens, how long. Never leaves this PC's database. */
 export async function logUsage(path: string, seconds: number, device: string) {
-  await requireAuth();
+  // the last screen's time can arrive just after signing out or changing the password: drop it quietly
+  if (!(await requireAuth().then(() => true, () => false))) return;
   if (!path || path.startsWith("/login") || !(seconds >= 0)) return;
   await db().from("usage_events").insert({ path: path.slice(0, 120), seconds: Math.min(3600, Math.round(seconds)), device: device === "phone" ? "phone" : "desktop" });
 }
@@ -727,7 +728,9 @@ const CHAT_KIND: Record<string, string> = { brief: "Morning catch-up", checkin: 
 /** His recent conversations with the assistant, newest first, for the bubble's "Earlier chats". Read-only. */
 export async function recentChats(): Promise<ChatSummary[]> {
   await requireAuth();
-  const { data } = await db().from("agent_runs").select("id,goal,status,created_at,kind,unread").order("created_at", { ascending: false }).limit(40);
+  // MyManager's own background work (scheduled jobs, looking into a failed step) isn't a chat with him: its results
+  // already reach him on cards, and its instructions to itself would only clutter the list
+  const { data } = await db().from("agent_runs").select("id,goal,status,created_at,kind,unread").neq("kind", "job").order("created_at", { ascending: false }).limit(40);
   return ((data ?? []) as { id: string; goal: string; status: string; created_at: string; kind?: string; unread?: boolean }[])
     .map((r) => ({ id: r.id, title: (r.kind && CHAT_KIND[r.kind]) || r.goal, status: r.status, created_at: r.created_at, unread: !!r.unread }));
 }

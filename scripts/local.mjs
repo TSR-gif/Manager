@@ -77,6 +77,29 @@ const run = (cmd, args, name, opts = {}) => {
 const db = run(process.execPath, [path.join(ROOT, "scripts", "dev-rest.mjs")], "db");
 // give the database a moment to open/migrate before the app starts
 await new Promise((r) => setTimeout(r, 2500));
+// After an update, Next's saved build cache can disagree with the new code, and the page then reloads itself
+// over and over ("HMR hash mismatch"). So when the code changed since the last start, drop that cache first
+// (it's rebuilt by itself; the first page just takes a little longer). Nothing else in .next is touched.
+function codeVersion() {
+  try {
+    const head = fs.readFileSync(path.join(ROOT, ".git", "HEAD"), "utf8").trim();
+    const ref = head.startsWith("ref: ") ? fs.readFileSync(path.join(ROOT, ".git", head.slice(5)), "utf8").trim() : head;
+    if (ref) return ref;
+  } catch { /* not a git folder: use the newest file instead */ }
+  let newest = 0;
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else newest = Math.max(newest, fs.statSync(f).mtimeMs); } };
+  try { walk(path.join(ROOT, "src")); } catch { /* no src? leave it */ }
+  return String(newest);
+}
+try {
+  const mark = path.join(ROOT, ".localdb-logs", "code-version.txt"); // MyManager's own folder: Next tidies .next by itself
+  const now = codeVersion();
+  const was = fs.existsSync(mark) ? fs.readFileSync(mark, "utf8").trim() : null;
+  const cache = path.join(ROOT, ".next", "dev", "cache", "turbopack");
+  if (was !== now && fs.existsSync(cache)) { fs.rmSync(cache, { recursive: true, force: true }); console.log("[app] The code changed since last time, so the build cache starts fresh."); }
+  fs.mkdirSync(path.dirname(mark), { recursive: true });
+  fs.writeFileSync(mark, now);
+} catch (e) { console.log(`[app] Couldn't check the build cache (${e.message}); carrying on.`); }
 const nextBin = path.join(ROOT, "node_modules", "next", "dist", "bin", "next");
 const app = run(process.execPath, [nextBin, "dev", "-p", "3000", "-H", HOST], "app", { base: appEnv });
 
