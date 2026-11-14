@@ -280,6 +280,6 @@ Thomas chose WSL2 for real containment. New `src/lib/sandbox.ts`, switched on wi
 
 ## 2026-11-14: In-depth project study
 - Studying a project now goes far past the README: code, database scripts, hosting, data files on his PC (found by itself, e.g. OneDrive\TS Rail Pty Ltd), Excel workbooks with their VBA macros decoded, and live app data from weekly Supabase backups on GitHub. All read-only.
-- New: `src/lib/data-files.mjs` (zip, xlsx/xlsm, VBA, COPY dumps; no new packages), `src/lib/snapshots.ts`, tools `read_data_file`, `read_app_data`, `save_project_knowledge`, migration 0021 (`knowledge`, `knowledge_updated_at`, `data_paths`).
+- New: `src/lib/data-files.mjs` (zip, xlsx/xlsm, VBA, COPY dumps; no new packages), `src/lib/snapshots.ts`, tools `read_data_file`, `read_app_data`, `save_project_knowledge`, migration 0022 (`knowledge`, `knowledge_updated_at`, `data_paths`).
 - Private knowledge feeds inspect_project; "Needs Thomas" lines feed get_overview. "Study it now" works for every project and runs in the background.
 - Tests: tests/data-files.test.mjs (4).
