@@ -238,8 +238,8 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
   },
   {
     name: "save_project_knowledge",
-    description: "Save what you've worked out about a project from studying it in depth (business facts with dates, how its data is laid out, where it lives and is hosted, what's broken or unfinished, what only Thomas can do, what to keep an eye on). Private: kept in MyManager's own database for you, not shown on screen and not written to the project's folder. data_paths: folders/files on his PC holding the project's data, one per line, or null if none.",
-    input_schema: { type: "object", properties: { project_name: str, knowledge: str, data_paths: nstr }, required: ["project_name", "knowledge", "data_paths"], additionalProperties: false },
+    description: "Save what you've worked out about a project from studying it in depth (business facts with dates, how its data is laid out, where it lives and is hosted, what's broken or unfinished, what only Thomas can do, what to keep an eye on). Private: kept in MyManager's own database for you, not shown on screen and not written to the project's folder. data_paths: folders/files on his PC holding the project's data, one per line, or null if none. code_folder: the project's git folder on his PC if you found one, or null; it's linked only if the project has none yet.",
+    input_schema: { type: "object", properties: { project_name: str, knowledge: str, data_paths: nstr, code_folder: nstr }, required: ["project_name", "knowledge", "data_paths", "code_folder"], additionalProperties: false },
     strict: true,
   },
   {
@@ -596,9 +596,13 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         // one path per line; drop notes Claude adds after a path, like "C:\x (old copies)"
         const paths = (opt(input.data_paths) ?? "").split(/\r?\n/).map((s) => s.trim().replace(/\s+\(.*\)$/, ""))
           .filter((s) => s && !BROAD.test(s)).join("\n") || null;
-        const { error } = await db().from("projects").update({ knowledge: String(input.knowledge).slice(0, 30000), knowledge_updated_at: new Date().toISOString(), data_paths: paths }).eq("id", p.id);
+        // Link the code folder it found, but never replace one that's already set (Thomas may have chosen it).
+        const folder = opt(input.code_folder);
+        const { existsSync } = await import("node:fs");
+        const link = folder && !(p as { local_path?: string | null }).local_path && existsSync(`${folder}/.git`) ? { local_path: folder } : {};
+        const { error } = await db().from("projects").update({ knowledge: String(input.knowledge).slice(0, 30000), knowledge_updated_at: new Date().toISOString(), data_paths: paths, ...link }).eq("id", p.id);
         if (error) return { label: "Couldn't save what I learned", result: `Not saved: ${error.message}`, isError: true };
-        return { label: `Saved what I learned about ${p.name}`, result: "Saved privately. You'll see it in inspect_project." };
+        return { label: `Saved what I learned about ${p.name}`, result: `Saved privately. You'll see it in inspect_project.${link.local_path ? ` Linked its folder ${folder}, so don't ask Thomas to.` : ""}` };
       }
       case "supervise_project": {
         const p = await findProject(input.project_name as string);
