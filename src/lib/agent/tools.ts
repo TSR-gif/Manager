@@ -225,6 +225,24 @@ Set optional: true for steps he called optional. Never put passwords or keys in 
     strict: true,
   },
   {
+    name: "read_data_file",
+    description: "Read a data file on Thomas's PC, read-only: an Excel workbook (.xlsx/.xlsm, including its macros' code), a PDF (its text), or a .csv/.sql/.json/.txt export. Without sheet you get every sheet's first and last rows plus the macros; with sheet you get up to 300 rows of it from from_row. path is a full path inside his user folder. Never opens secret files.",
+    input_schema: { type: "object", properties: { path: str, sheet: nstr, from_row: { type: ["integer", "null"] } }, required: ["path", "sheet", "from_row"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "read_app_data",
+    description: "Read a project's live app data, read-only, from its newest weekly database backup on GitHub (copied to this PC only). table null lists every table with its columns and row count; with table you get up to 200 rows from offset. Sign-in tables and password/key columns are never shown.",
+    input_schema: { type: "object", properties: { project_name: str, table: nstr, offset: { type: ["integer", "null"] } }, required: ["project_name", "table", "offset"], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: "save_project_knowledge",
+    description: "Save what you've worked out about a project from studying it in depth (business facts with dates, how its data is laid out, where it lives and is hosted, what's broken or unfinished, what only Thomas can do, what to keep an eye on). Private: kept in MyManager's own database for you, not shown on screen and not written to the project's folder. data_paths: folders/files on his PC holding the project's data, one per line, or null if none. code_folder: the project's git folder on his PC if you found one, or null; it's linked only if the project has none yet.",
+    input_schema: { type: "object", properties: { project_name: str, knowledge: str, data_paths: nstr, code_folder: nstr }, required: ["project_name", "knowledge", "data_paths", "code_folder"], additionalProperties: false },
+    strict: true,
+  },
+  {
     name: "supervise_project",
     description: "Start supervising work on a project until it's finished. Use when Thomas says something like \"Day trader is doing X, Y and Z, make sure it gets finished\". Breaks it into steps (tasks), then MyManager checks on it regularly on its own, ticks off steps that are really done, and asks Thomas when it needs him (in the app and on his phone). work_dir is the project's folder on his PC if he wants MyManager to do the coding steps itself (that needs his OK once, which this asks for); otherwise null. done_check makes it a loop: a test/type-check/lint/build command (like \"npm test\" or \"py -m pytest\") that must pass. MyManager then codes, runs the check, fixes failures, has a second read-only reviewer look at the change, and repeats until it passes and is approved (max_rounds goes, default 6) before telling Thomas the branch is ready. Use it when Thomas says things like \"keep going until the tests pass\". Otherwise null.",
     input_schema: {
@@ -355,6 +373,12 @@ async function noProject(name: unknown) {
   return { label: "Couldn't match that project name", result: `No project matches "${name}". The projects are: ${(data ?? []).map((p: { name: string }) => p.name).join(", ")}. Try again with one of these exact names.`, isError: true };
 }
 
+/** Whole general folders (Downloads, Documents...) aren't a project's data: watching them would restudy on every download. */
+const BROAD = /^[a-z]:[\\/]users[\\/][^\\/]+([\\/](downloads|documents|desktop|onedrive|pictures))?[\\/]?$/i;
+
+/** Claude sometimes sends the word "null" (or nothing) for an optional field: treat it as no value. */
+const opt = (v: unknown) => (v === null || v === undefined || /^(null|none|)$/i.test(String(v).trim()) ? null : String(v));
+
 /** Runs one tool call. Returns text for Claude plus a short label for the UI. */
 export async function runTool(name: string, input: Record<string, unknown>): Promise<{ result: string; label: string; isError?: boolean }> {
   try {
@@ -382,7 +406,7 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const t = (tasks.data ?? []).map((x: Pick<Task, "id" | "title" | "status" | "priority" | "due" | "project_id">) => ({ ...x, project: x.project_id ? names.get(x.project_id) : "everyday", project_id: undefined }));
         return {
           label: "Read your projects and tasks",
-          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.error ? `Couldn't read projects: ${projects.error.message}` : (projects.data ?? []).map(({ brief, ...p }: Record<string, unknown>) => ({ ...p, brief_commit: undefined, has_brief: !!brief })), open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary,
+          result: JSON.stringify({ today: new Date().toISOString().slice(0, 10), projects: projects.error ? `Couldn't read projects: ${projects.error.message}` : (projects.data ?? []).map(({ brief, knowledge, ...p }: Record<string, unknown>) => ({ ...p, brief_commit: undefined, has_brief: !!brief, needs_thomas: String(knowledge ?? "").match(/## Needs Thomas\n([\s\S]*?)(\n## |$)/)?.[1]?.trim() || undefined })), open_tasks: t, ideas_inbox: ideas.data, pending_approvals: pending.data, ...(money.configured ? { money_up_bank: money } : {}), screens_opened_last_7_days: usageSummary,
             supervised_missions: (missionsQ.data ?? []).map((m: { project_id: string | null }) => ({ ...m, project: m.project_id ? names.get(m.project_id) : null })),
             done_last_7_days: (doneQ.data ?? []).map((d: { title: string; project_id: string | null }) => ({ title: d.title, project: d.project_id ? names.get(d.project_id) : "everyday" })) }),
         };
@@ -553,6 +577,32 @@ export async function runTool(name: string, input: Record<string, unknown>): Pro
         const { writeNotes } = await import("@/lib/project-notes");
         await writeNotes(p.id).catch(() => "");
         return { label: `Updated the ${p.name} brief`, result: "Saved. It shows on the project page." };
+      }
+      case "read_data_file": {
+        const { readDataFile } = await import("@/lib/briefs");
+        const file = String(input.path ?? "");
+        return { label: `Read ${file.split(/[\\/]/).pop()}${opt(input.sheet) ? ` (${input.sheet})` : ""}`, result: readDataFile(file, opt(input.sheet), Number(input.from_row) || 1) };
+      }
+      case "read_app_data": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return noProject(input.project_name);
+        if (!p.github_repo) return { label: "No app data to read", result: `${p.name} has no GitHub repo, so there are no database backups to read.` };
+        const { snapshotText } = await import("@/lib/snapshots");
+        return { label: `Read ${p.name}'s data${opt(input.table) ? ` (${input.table})` : ""}`, result: await snapshotText(p.github_repo, opt(input.table), Math.max(0, Number(input.offset) || 0)) };
+      }
+      case "save_project_knowledge": {
+        const p = await findProject(input.project_name as string);
+        if (!p) return noProject(input.project_name);
+        // one path per line; drop notes Claude adds after a path, like "C:\x (old copies)"
+        const paths = (opt(input.data_paths) ?? "").split(/\r?\n/).map((s) => s.trim().replace(/\s+\(.*\)$/, ""))
+          .filter((s) => s && !BROAD.test(s)).join("\n") || null;
+        // Link the code folder it found, but never replace one that's already set (Thomas may have chosen it).
+        const folder = opt(input.code_folder);
+        const { existsSync } = await import("node:fs");
+        const link = folder && !(p as { local_path?: string | null }).local_path && existsSync(`${folder}/.git`) ? { local_path: folder } : {};
+        const { error } = await db().from("projects").update({ knowledge: String(input.knowledge).slice(0, 30000), knowledge_updated_at: new Date().toISOString(), data_paths: paths, ...link }).eq("id", p.id);
+        if (error) return { label: "Couldn't save what I learned", result: `Not saved: ${error.message}`, isError: true };
+        return { label: `Saved what I learned about ${p.name}`, result: `Saved privately. You'll see it in inspect_project.${link.local_path ? ` Linked its folder ${folder}, so don't ask Thomas to.` : ""}` };
       }
       case "supervise_project": {
         const p = await findProject(input.project_name as string);

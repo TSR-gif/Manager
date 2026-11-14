@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "local": "node scripts/local.mjs",
-    "test": "node --test tests/security.test.mjs tests/review.test.mjs && node --experimental-strip-types --no-warnings --test tests/step-words.test.mjs"
+    "test": "node --test tests/security.test.mjs tests/review.test.mjs tests/data-files.test.mjs && node --experimental-strip-types --no-warnings --test tests/step-words.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

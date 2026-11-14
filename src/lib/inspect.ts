@@ -71,6 +71,10 @@ export async function inspectProject(p: Project): Promise<string> {
   if (p.notes) out.push(`Notes: ${p.notes}`);
   const { briefHeader } = await import("@/lib/briefs");
   out.push(`\n${briefHeader(p as Parameters<typeof briefHeader>[0])}`);
+  // Private: what an in-depth study found (business facts, data, hosting). Only the assistant sees it, here.
+  const k = p as { knowledge?: string | null; knowledge_updated_at?: string | null };
+  out.push(k.knowledge ? `\n## What I worked out studying it in depth (${k.knowledge_updated_at?.slice(0, 10)}, private: use it, don't recite it)\n${k.knowledge}`
+    : "\n## In-depth study\nNot done yet. MyManager studies each project by itself; it will be ready soon.");
 
   const { data: taskRows } = await db().from("tasks").select("*").eq("project_id", p.id);
   const tasks = (taskRows ?? []) as Task[];

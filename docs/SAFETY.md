@@ -27,9 +27,14 @@ That's what the sandbox is for (`src/lib/sandbox.ts`). With `CODER_SANDBOX=wsl` 
 `CODER_SANDBOX=native` does the same on Linux or macOS without WSL. Unset means the guard only. Ubuntu needs `bubblewrap`, `socat`, `ripgrep`, `git`, Node (via nvm), `@anthropic-ai/claude-code` (signed in) and `@anthropic-ai/sandbox-runtime`. `npm test` checks the walls for real wherever bwrap, socat and srt are installed.
 
 ## What leaves the PC
-- **To Anthropic (through the Claude Code app or the API):** the assistant's prompt, which includes project names, briefs, rules, open tasks, recent activity, files it reads from project folders and command output it runs. Never .env or key files.
+- **To Anthropic (through the Claude Code app or the API):** the assistant's prompt, which includes project names, briefs, rules, open tasks, recent activity, files it reads from project folders and command output it runs, and during an in-depth study the data files and app backups it reads (spreadsheets, database tables). Never .env or key files, sign-in tables, or columns that look like passwords or keys.
 - **To Telegram (if paired):** approval titles, reasons and costs, mission questions, job finished/stalled messages, and the assistant's replies to what he types there.
 - **To GitHub/Vercel/Up:** only the calls each feature makes with his tokens (status, issues, redeploys, bank totals).
+
+## In-depth project study (read-only)
+- MyManager studies each project by itself (one per check-in pass, again when its code or data changes, at least weekly): code, database scripts, data files on the PC (Excel workbooks including their macros' code, exports) and, for apps with weekly Supabase backups on GitHub, the newest backup's tables.
+- Nothing is changed: the tools only read. Backups are downloaded with the GitHub sign-in already on the PC into `.localdb-snapshots/` (git-ignored) and never uploaded anywhere else; no database password is stored.
+- What it learns goes in `projects.knowledge` in MyManager's own database, for the assistant only. It is not written into the project's folder (the brief is, so the brief carries no money figures or names) and not shown as a screen of detail; only the "Needs Thomas" lines reach the overview.
 
 ## Backups and restore (built-in database)
 A compressed copy is saved once a day to `.localdb-backups/<date>.tar.gz` (newest 14 kept). To restore: close MyManager, rename `.localdb` to `.localdb-old` (nothing is deleted), then run `node scripts/dev-rest.mjs --restore .localdb-backups/<date>.tar.gz`. When it says the database is ready, close it and start MyManager as usual. It refuses to restore over an existing `.localdb`.

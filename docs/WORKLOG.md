@@ -292,6 +292,12 @@ Thomas: "all this needs to be improved", "keeps running into stops its horrible 
 - **Launcher fix.** The app no longer gets `.env.local`'s values from the launcher, so a password or database changed from a card doesn't snap back when Next reloads its settings. The helpers' key follows a password change too.
 - Tests: `npm test` adds tests/step-words.test.mjs (5 checks). Tried in a copy: stale failed job re-ran and finished; duplicate link cards closed to one; Dashboard ask stayed on the Dashboard; the online plan appeared by itself, OK started it, the password card saved a new password and the plan carried on to the Vercel step.
 
+## 2026-11-14: In-depth project study
+- Studying a project now goes far past the README: code, database scripts, hosting, data files on his PC (found by itself, e.g. OneDrive\TS Rail Pty Ltd), Excel workbooks with their VBA macros decoded, and live app data from weekly Supabase backups on GitHub. All read-only.
+- New: `src/lib/data-files.mjs` (zip, xlsx/xlsm, VBA, COPY dumps; no new packages), `src/lib/snapshots.ts`, tools `read_data_file`, `read_app_data`, `save_project_knowledge`, migration 0022 (`knowledge`, `knowledge_updated_at`, `data_paths`).
+- Private knowledge feeds inspect_project; "Needs Thomas" lines feed get_overview. "Study it now" works for every project and runs in the background.
+- Tests: tests/data-files.test.mjs (4).
+
 ## 2026-11-14 · Checks and fixes while Thomas was away
 Thomas: "im going away so do as much as you need for the next couple ours run checks and fixes". Went through the merged app in a test copy: every screen at computer and phone size, the Dashboard chat, the bubble and earlier chats, and the whole "Put MyManager online" plan against a stand-in for Vercel.
 - **Going online sets up the online database itself.** New first step: Supabase's own tool links the folder to the new project and applies every file in `supabase/migrations` (with the row locks), with no database password kept. Without it the data copy would have failed on an empty database. After that, every 10 minutes, a new migration from an update is applied online by itself, once; if that fails he's told once in plain words.
@@ -302,3 +308,6 @@ Thomas: "im going away so do as much as you need for the next couple ours run ch
 - **Page reloading itself after an update.** In the test copy every page reloaded several times a second ("HMR hash mismatch") because Next's saved build cache didn't match the new code. The launcher now starts that cache fresh when the code changed since the last start.
 - **Smaller ones.** Long paths no longer run off the cards on a phone. Earlier chats no longer list MyManager's own background work under its instructions to itself. The copy step says plainly when it can't reach the online database. A stray error after changing the password is gone.
 - Checks: types, lint, `npm test` (35 + 5) and `next build` pass.
+
+## 2026-11-14: Pending approvals finished from the cloud
+Thomas: "Push and accept everything" (earlier: "merge all"). PR 11 (in-depth project study) clashed with main after PR 14 only in `.gitignore` and this log; kept both sides, types, lint and `npm test` pass, and merged it. The free MyManager Supabase database was not made: the cloud connector can't create a new organisation, and his only one in the tomscida account is on Pro, where a new project adds about US$10 a month. Left for his choice.
