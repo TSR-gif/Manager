@@ -45,3 +45,4 @@ next-env.d.ts
 .localdb
 .localdb-logs
 .localdb-backups
+.localdb-snapshots

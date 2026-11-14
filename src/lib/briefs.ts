@@ -2,8 +2,10 @@ import "server-only";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { promisify } from "node:util";
 import { db } from "@/lib/db";
+import { workbookText } from "@/lib/data-files.mjs";
 import { gh } from "@/lib/inspect";
 import { runAgent } from "@/lib/agent/run";
 
@@ -18,9 +20,46 @@ export interface BriefProject {
   id: string; name: string; github_repo: string | null; local_path?: string | null; brief?: string | null;
   brief_updated_at?: string | null; brief_commit?: string | null; brief_edited_by_you?: boolean; rules?: string | null;
   goal?: string | null; notes?: string | null; kind?: string | null;
+  knowledge?: string | null; knowledge_updated_at?: string | null; data_paths?: string | null;
 }
 
 export const hasCode = (p: BriefProject) => !!(p.github_repo || p.local_path);
+const dataPaths = (p: BriefProject) => (p.data_paths ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+
+/** Newest change time of the files in a project's data folders (a few levels down), so a restudy happens when the data moves on. */
+function newestData(p: BriefProject) {
+  let newest = 0, seen = 0;
+  const visit = (f: string, depth: number) => {
+    if (seen++ > 3000) return;
+    let st: fs.Stats;
+    try { st = fs.statSync(f); } catch { return; }
+    if (!st.isDirectory()) { newest = Math.max(newest, st.mtimeMs); return; }
+    if (depth > 0) for (const n of fs.readdirSync(f)) if (!n.startsWith(".") && n !== "node_modules") visit(path.join(f, n), depth - 1);
+  };
+  for (const d of dataPaths(p)) visit(d, 3);
+  return newest;
+}
+
+const SECRET_FILE = /(^|\/)\.env(\.|$)|secret|credential|\.pem$|\.key$|(^|\/)\.(ssh|aws)\/|Login Data|Cookies/i;
+const TEXT_EXT = new Set([".csv", ".tsv", ".sql", ".json", ".txt", ".md", ".log", ".xml"]);
+/** Read one data file anywhere in Thomas's user folder, read-only: workbooks (with their macros) or text exports. */
+export function readDataFile(file: string, sheet: string | null, fromRow = 1): string {
+  let real: string, home: string;
+  try { real = fs.realpathSync.native(path.resolve(file)); home = fs.realpathSync.native(os.homedir()); } catch { return `Couldn't find ${file}.`; }
+  const rel = path.relative(home, real);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return "Only files in Thomas's user folder can be read.";
+  if (SECRET_FILE.test(rel.replace(/\\/g, "/"))) return "Secret files are never read.";
+  const st = fs.statSync(real);
+  if (st.isDirectory()) return "That's a folder: list it with Glob or LS, then read the files in it.";
+  if (st.size > 60 << 20) return "That file is too big to read here.";
+  const ext = path.extname(real).toLowerCase();
+  try {
+    if (ext === ".xlsx" || ext === ".xlsm") return workbookText(fs.readFileSync(real), sheet, fromRow);
+    if (ext === ".xls") return "Old .xls workbooks can't be read here. If it matters, ask Thomas to save a copy as .xlsx.";
+    if (TEXT_EXT.has(ext)) { const t = fs.readFileSync(real, "utf8"); return t.length > MAX ? `${t.slice(0, MAX)}\n…(cut, ${t.length} characters in total)` : t; }
+  } catch (e) { return `Couldn't read it: ${String(e).slice(0, 200)}`; }
+  return "Read PDFs and images with the Read tool. Other kinds of file can't be read here.";
+}
 
 /** The newest commit we can see: the PC folder first, then GitHub. */
 export async function latestCommit(p: BriefProject): Promise<string | null> {
@@ -85,23 +124,44 @@ export function briefSections() {
 (the 3 to 5 most useful next steps, most important first)`;
 }
 
+export function knowledgeSections() {
+  return `## What it knows about Thomas's business and life
+(the real facts the app's data holds, with dates and numbers: e.g. clients, jobs, invoices paid and outstanding, money in and out by year, workers and hours, schedules, bets, points. Say how current the data is.)
+## How the data is laid out
+(tables / sheets, what each holds, key fields, how they link, which formulas or macros do the work)
+## Where it lives
+(code, database, files on his PC, hosting, domains, backups, and whether backups really work)
+## Unfinished or broken
+(real problems seen in the code or data: half-built features, errors, stale or duplicated files, data that stopped being entered)
+## Needs Thomas
+(only things only he can do or decide, each one line, most important first; "nothing" if none)
+## Keep an eye on
+(signals worth checking regularly, e.g. invoices going overdue, a backup that stops, a site that's down)`;
+}
+
 export function studyGoal(p: BriefProject) {
-  return `Study the ${p.name} project and write its project brief. Thomas wants you to fully understand each of his projects, and you'll read this brief before answering or acting on ${p.name}.
+  const paths = dataPaths(p);
+  return `Study the ${p.name} project in depth. Thomas: "The whole idea is for this to automate my day to day life." His apps hold a lot about his business and life, and you need to really understand each one: what it does, what its data says, where it lives, and what's broken. Skimming a README is not enough. Everything here is READ-ONLY: never change, move or delete anything, and never run anything that writes.
 1. Call inspect_project("${p.name}").
-2. Read the files that explain it with read_project_file: any CLAUDE.md, README, the package/requirements file, the main entry points, config, and a few core source files. Use "" or a folder name to list files. Read enough to really understand it (about 5 to 12 files), but never secrets or .env files.
-3. Call save_project_brief with a brief in this exact shape, plain words, specific (real file names, real commands), no guessing: say "not sure" where you can't tell.
-${briefSections()}
-${p.rules ? `\nThomas's own rules for this project (don't put them in the brief, they're kept separately, but respect them): ${p.rules}` : ""}
+2. ${hasCode(p) ? "Read the code with read_project_file: README/CLAUDE.md, the package or requirements file, entry points, config and hosting files (vercel.json, workflows), the database scripts or migrations (they show every table), and the core source files for each feature. Read as much as you need to really understand it, often 15 to 30 files. Never secrets or .env files." : "There's no code linked. Work from what Thomas has written and the data you can find."}
+3. Find the data. ${paths.length ? `Its data is in: ${paths.join("; ")}. Check for new files there too.` : `Look for folders and files about ${p.name} on his PC with Glob (OneDrive, Documents, Desktop, Downloads), e.g. a company folder, spreadsheets, exports, invoices, reports.`} Read spreadsheets with read_data_file (it shows sheets, formulas and the macros' code; ask for one sheet to see all its rows), PDFs with Read.${p.github_repo ? ` Call read_app_data("${p.name}", null) for the live app data from its weekly database backup, then read the tables that matter (money, clients, jobs, people, dates).` : ""}
+4. Work out the real facts: totals, what's outstanding or overdue, what's recent, what stopped. Check your sums.
+5. Call save_project_knowledge with data_paths (the data folders/files you found, one per line, or null) and the knowledge in this shape, plain words, specific, no guessing ("not sure" where you can't tell):
+${knowledgeSections()}
+${hasCode(p) ? `6. Call save_project_brief with the brief in this shape (it's written into the project's folder, so NO money figures, client or worker names, or personal details in it: those go in the knowledge only):
+${briefSections()}` : "6. Don't write a brief (there's no code)."}
+${p.rules ? `\nThomas's own rules for this project (respect them, don't copy them): ${p.rules}` : ""}
+${p.knowledge ? `\nWhat you worked out last time (${p.knowledge_updated_at?.slice(0, 10) ?? "earlier"}). Check it against what's there now and update it:\n${p.knowledge}` : ""}
 ${p.brief ? `\nThe current brief is below.${p.brief_edited_by_you ? " Thomas corrected it himself: keep his corrections unless the code clearly shows they're now out of date." : ""} Update it rather than starting over:\n${p.brief}` : ""}
-Finish with one line saying what changed in the brief.`;
+Finish with one line saying what you learned that's new.`;
 }
 
 let studying = false;
-/** Study one project now (writes the brief through the save_project_brief tool). */
+/** Study one project now, in depth (saves the knowledge and the brief through their tools). */
 export async function studyProject(id: string) {
   const { data } = await db().from("projects").select("*").eq("id", id).maybeSingle();
   const p = data as BriefProject | null;
-  if (!p || !hasCode(p)) return null;
+  if (!p) return null;
   const sha = await latestCommit(p);
   const started = Date.now();
   const runId = await runAgent(studyGoal(p), () => {}, undefined, { kind: "study" });
@@ -112,20 +172,22 @@ export async function studyProject(id: string) {
   return runId;
 }
 
-/** From the tick: refresh at most one brief per pass, when it's missing or the code has moved on. */
+/** From the tick: study at most one project per pass: never studied in depth, or its code or data has moved on (or a week has passed). */
 export async function refreshDueBriefs() {
   if (studying) return null;
   studying = true;
   try {
-    const { data } = await db().from("projects").select("id,name,github_repo,local_path,brief,brief_updated_at,brief_commit,status").in("status", ["active", "paused"]);
-    const list = ((data ?? []) as (BriefProject & { status: string })[]).filter(hasCode);
-    const missing = list.find((p) => !p.brief);
+    const { data } = await db().from("projects").select("id,name,github_repo,local_path,brief,brief_updated_at,brief_commit,knowledge_updated_at,data_paths,status").in("status", ["active", "paused"]);
+    const list = (data ?? []) as (BriefProject & { status: string })[];
+    const missing = list.find((p) => !p.knowledge_updated_at) ?? list.find((p) => hasCode(p) && !p.brief);
     if (missing) return { project: missing.name, runId: await studyProject(missing.id) };
     for (const p of list) {
-      const age = p.brief_updated_at ? Date.now() - new Date(p.brief_updated_at).getTime() : Infinity;
+      const studied = new Date(p.knowledge_updated_at!).getTime();
+      const age = Date.now() - studied;
       if (age < 12 * 3600_000) continue;
-      const sha = await latestCommit(p);
-      if (sha && sha !== p.brief_commit) return { project: p.name, runId: await studyProject(p.id) };
+      const sha = hasCode(p) ? await latestCommit(p) : null;
+      const moved = (sha && sha !== p.brief_commit) || newestData(p) > studied || (age > 7 * 86_400_000 && (hasCode(p) || dataPaths(p).length > 0));
+      if (moved) return { project: p.name, runId: await studyProject(p.id) };
     }
     return null;
   } finally {

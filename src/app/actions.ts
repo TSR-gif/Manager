@@ -696,8 +696,11 @@ export async function studyNow(form: FormData) {
   if (!id) return;
   const { data: p } = await db().from("projects").select("*").eq("id", id).single();
   if (!p) return;
-  const { studyGoal } = await import("@/lib/briefs");
-  redirect(`/agent?ask=${encodeURIComponent(studyGoal(p))}`);
+  // Runs in the background (it can take a while) and shows in the assistant's runs. Not via ?ask=: the study
+  // instructions carry what it learned last time, which mustn't sit in a URL.
+  const { studyProject } = await import("@/lib/briefs");
+  void studyProject(id).catch(() => {});
+  redirect("/agent");
 }
 
 // ---------- runbooks ----------

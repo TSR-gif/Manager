@@ -253,7 +253,7 @@ export default async function HelperPage({ params, searchParams }: { params: Pro
         </div>
         <div className="sec flex items-center gap-2">What it knows
           <span className="font-normal normal-case tracking-normal">{bp.brief_updated_at ? `· written ${ago(bp.brief_updated_at)}${bp.brief_edited_by_you ? ", corrected by you" : ""}` : ""}</span>
-          {hasCodeHere && <form action={studyNow} className="ml-auto"><input type="hidden" name="id" value={p.id} /><button className="btn btn-sm normal-case tracking-normal">{bp.brief ? "Study it again" : "Study it now"}</button></form>}
+          {<form action={studyNow} className="ml-auto"><input type="hidden" name="id" value={p.id} /><button className="btn btn-sm normal-case tracking-normal">{bp.brief ? "Study it again" : "Study it now"}</button></form>}
         </div>
         {bp.brief ? (
           <details className="group">
