@@ -8,7 +8,7 @@ import path from "node:path";
  * script or session can't pick them up from its environment. Windows' own variables (PATH, APPDATA, ...) stay so
  * programs still start. Reading files is the guard's job (scripts/guard.mjs); this only covers the environment.
  */
-const SECRETISH = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|SERVICE_ROLE|CREDENTIAL|SESSION_?KEY|AUTH_SECRET|^MANAGER_|^SUPABASE_|^ANTHROPIC_|^OPENAI_|^UP_|^TELEGRAM_|^VERCEL_|^GITHUB_|^GH_)/i;
+const SECRETISH = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|SERVICE_ROLE|CREDENTIAL|SESSION_?KEY|AUTH_SECRET|^MANAGER_|^SUPABASE_|^ANTHROPIC_|^OPENAI_|^UP_|^TELEGRAM_|^VERCEL_|^GITHUB_|^GH_|^MM_LOCAL_)/i;
 
 function appKeys(): Set<string> {
   const keys = new Set<string>();

@@ -59,11 +59,23 @@ export async function syncCampaign(a: Pick<Action, "kind" | "payload">, step: "a
   }
 }
 
-async function execute(a: Action): Promise<Action> {
+/** Things only the PC can do (its git folders). Approved online, they're done by the PC on its next pass. */
+const PC_ONLY = new Set(["code.push"]);
+export async function runPcApproved() {
+  if (process.env.VERCEL) return;
+  const { data } = await db().from("actions").select("*").eq("status", "approved").in("kind", [...PC_ONLY]);
+  for (const a of (data ?? []) as Action[]) {
+    // claim it first so two passes can't run it twice
+    const { data: got } = await db().from("actions").update({ result: { on_pc: "running" } }).eq("id", a.id).eq("status", "approved").is("result", null).select("id");
+    if ((got ?? []).length) await execute({ ...a, status: "approved" }, true);
+  }
+}
+
+async function execute(a: Action, onPc = false): Promise<Action> {
   const k = kindOf(a.kind);
   const now = new Date().toISOString();
   await syncCampaign(a, "approved");
-  if (!k.execute) {
+  if (!k.execute || (!onPc && process.env.VERCEL && PC_ONLY.has(a.kind))) {
     // Nothing automatic to run: approved and handed to the agent / PC helper / you.
     const [r] = unwrap(await db().from("actions").update({ status: "approved", decided_at: a.decided_at ?? now }).eq("id", a.id).select());
     refresh();

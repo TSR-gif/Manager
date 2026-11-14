@@ -14,7 +14,7 @@ const MSG: Record<string, [string, "good" | "bad"]> = {
   "telegram-off": ["Telegram disconnected.", "good"],
   "telegram-format": ["That doesn't look like a bot token. It looks like 123456789:AAH… (numbers, a colon, then letters).", "bad"],
   "telegram-rejected": ["Telegram didn't accept that token. Copy it again from BotFather and paste the whole thing.", "bad"],
-  "up": ["Up connected. Your balance and spending now show on Today and Money.", "good"],
+  "up": ["Up connected. Your balance and spending now show on the Dashboard and Money.", "good"],
   "up-off": ["Up disconnected and the token removed from this PC.", "good"],
   "up-format": ["Paste the whole token from the Up app.", "bad"],
   "github": ["GitHub connected. Ask \"how is my Day trader going?\" to try it.", "good"],

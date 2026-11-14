@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { CheckCircle2, CircleDashed, CircleX, Hand, Loader2, MonitorCog, Square } from "lucide-react";
-import { runbookStepDone, runbookStop } from "@/app/actions";
+import { decideAction, runbookStepDone, runbookStop } from "@/app/actions";
 import { ago } from "@/components/ui";
 import type { Runbook, Step } from "@/lib/runbooks";
+import { stepNote } from "@/lib/step-words";
+import { PasswordForm } from "@/components/decisions";
 
 const STATUS: Record<Runbook["status"], { t: string; c: string }> = {
   draft: { t: "Draft", c: "" }, queued: { t: "Waiting for your OK", c: "chip-warn" }, running: { t: "Running", c: "chip-accent" },
@@ -51,22 +53,33 @@ export function RunbookCard({ r, project, tails }: { r: Runbook; project: string
             <Icon s={s} />
             <div className="min-w-0 flex-1">
               <div className={s.status === "skipped" ? "text-faint line-through" : ""}>{s.label}{s.optional && <span className="text-faint"> (optional)</span>}{s.outcome && OUTCOME[s.outcome] && <span className={`chip ${OUTCOME[s.outcome]!.c} ml-2 align-middle !text-[11.5px]`}>{OUTCOME[s.outcome]!.t}</span>}</div>
-              {s.note && <div className="text-[12.5px] text-muted">{s.note}</div>}
+              {stepNote(s) && <div className="text-[12.5px] text-muted">{stepNote(s)}</div>}
               {(s.kind === "start_job" || s.kind === "watch_process") && s.status === "running" && tails[s.id] && (
                 <pre className="mt-1.5 max-h-28 overflow-auto whitespace-pre-wrap rounded-lg bg-panel3 p-2 font-mono text-[11.5px] text-muted">{tails[s.id]}</pre>
               )}
-              {s.status === "waiting" && !s.approval_id && (
+              {s.status === "waiting" && s.form === "password" && <div className="mt-2"><PasswordForm runbookId={r.id} stepId={s.id} /></div>}
+              {s.status === "waiting" && !s.approval_id && !s.form && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   <form action={runbookStepDone}><input type="hidden" name="id" value={r.id} /><input type="hidden" name="step" value={s.id} /><button className="btn btn-primary !min-h-9 !px-3 !text-[13px]">{s.kind === "handoff" ? "Done" : "Fixed it, try again"}</button></form>
                   <form action={runbookStepDone}><input type="hidden" name="id" value={r.id} /><input type="hidden" name="step" value={s.id} /><input type="hidden" name="outcome" value="skipped" /><button className="btn !min-h-9 !px-3 !text-[13px]">{s.kind === "handoff" ? "Not needed" : "Skip this step"}</button></form>
                 </div>
               )}
-              {s.status === "waiting" && s.approval_id && <Link href="/approvals" className="mt-1 inline-block text-[13px] text-accent">Waiting for your OK in Approvals →</Link>}
+              {s.status === "waiting" && s.approval_id && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <form action={decideAction.bind(null, s.approval_id, true)}><button className="btn btn-primary !min-h-9 !px-3 !text-[13px]">OK, do it</button></form>
+                  <form action={decideAction.bind(null, s.approval_id, false)}><button className="btn !min-h-9 !px-3 !text-[13px]">Not now</button></form>
+                </div>
+              )}
             </div>
           </li>
         ))}
       </ol>
-      {r.status === "queued" && <Link href="/approvals" className="btn btn-sm w-fit">Review in Approvals</Link>}
+      {r.status === "queued" && (r.steps.approval_id ? (
+        <div className="flex flex-wrap gap-2">
+          <form action={decideAction.bind(null, r.steps.approval_id, true)}><button className="btn btn-primary btn-sm">OK, run it</button></form>
+          <form action={decideAction.bind(null, r.steps.approval_id, false)}><button className="btn btn-sm">Not now</button></form>
+        </div>
+      ) : <Link href="/approvals" className="btn btn-sm w-fit">Review in Approvals</Link>)}
       {live && (
         <form action={runbookStop}><input type="hidden" name="id" value={r.id} /><button className="btn btn-sm"><Square size={13} /> Stop the remaining steps</button></form>
       )}

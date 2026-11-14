@@ -223,6 +223,7 @@ input:focus, select:focus, textarea:focus {
 .dt > span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .amt { font-size: 18px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .amt small { font-size: 12px; color: var(--faint); font-weight: 500; }
+.dec .dt > span { white-space: pre-line; overflow: visible; display: block; -webkit-line-clamp: unset; line-height: 1.45; }
 .da { display: flex; gap: 6px; flex: none; }
 .da .btn { min-width: 72px; }
 .ans { display: flex; gap: 6px; align-items: center; flex: none; }
@@ -326,3 +327,8 @@ input:focus, select:focus, textarea:focus {
   body:has(.comp) .abub { bottom: calc(64px + 82px + env(safe-area-inset-bottom)); }
   .abox { inset: 0; width: auto; height: 100dvh; border-radius: 0; border: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 }
+.dashchat { margin-top: 20px; }
+.dec-col { flex-wrap: wrap; }
+.dec-col > .ans { width: 100%; padding-left: 54px; }
+.dec-col > .ans input { flex: 1; width: auto; min-width: 160px; }
+@media (max-width: 767px) { .dec-col > .ans { padding-left: 0; } }

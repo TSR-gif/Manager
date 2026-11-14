@@ -29,7 +29,7 @@ export function AssistantBubble({ name = "MyManager" }: { name?: string }) {
   const [loaded, setLoaded] = useState<{ id: string; goal: string; running: boolean; events: AgentEvent[] }>();
   const [list, setList] = useState<ChatSummary[] | null>(null); // null = showing the chat, not the list
   const [pending, start] = useTransition();
-  const hidden = path === "/agent" || path.startsWith("/login");
+  const hidden = path === "/" || path === "/agent" || path.startsWith("/login"); // the Dashboard and the chat page answer in place
 
   // page ask boxes and quick buttons come here instead of leaving the page
   useEffect(() => {

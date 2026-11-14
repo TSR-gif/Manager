@@ -33,7 +33,7 @@ export function Nav({ pending = 0, helpers = [], other = { money: "", ideas: "" 
           <b>MyManager</b>
           <Link href="/agent" className="iconbtn" aria-label="New chat" title="New chat"><SquarePen size={18} strokeWidth={1.7} /></Link>
         </div>
-        <Link href="/" className={`item ${on("/") ? "on" : ""}`}><MessageCircle size={18} strokeWidth={1.7} />Today{pending > 0 && <span className="badge">{pending}</span>}</Link>
+        <Link href="/" className={`item ${on("/") ? "on" : ""}`}><MessageCircle size={18} strokeWidth={1.7} />Dashboard{pending > 0 && <span className="badge">{pending}</span>}</Link>
         <Link href="/calendar" className={`item ${on("/calendar") ? "on" : ""}`}><Calendar size={18} strokeWidth={1.7} />Calendar</Link>
         <button type="button" onClick={open} className="item w-full text-left"><Search size={18} strokeWidth={1.7} />Search</button>
 
@@ -61,7 +61,7 @@ export function Nav({ pending = 0, helpers = [], other = { money: "", ideas: "" 
       </aside>
 
       <nav className="ptabs" aria-label="Main">
-        <Link href="/" className={on("/") ? "on" : ""}><MessageCircle size={23} strokeWidth={1.7} />Today{pending > 0 && <span className="badge">{pending}</span>}</Link>
+        <Link href="/" className={on("/") ? "on" : ""}><MessageCircle size={23} strokeWidth={1.7} />Dashboard{pending > 0 && <span className="badge">{pending}</span>}</Link>
         <Link href="/helpers" className={helpersOn ? "on" : ""}><LayoutGrid size={23} strokeWidth={1.7} />Helpers</Link>
         <Link href="/calendar" className={on("/calendar") ? "on" : ""}><Calendar size={23} strokeWidth={1.7} />Calendar</Link>
       </nav>
