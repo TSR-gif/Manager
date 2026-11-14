@@ -10,7 +10,7 @@ export type WaitingStep = { runbook: string; runbookId: string; project_id: stri
 export type Work = { key: string; href: string; project_id: string | null; title: string; sub: string; pct: number | null; kind: "mission" | "runbook" | "helper" };
 export type Done = { id: string; title: string; undo: unknown; undone: boolean; created_at: string };
 
-type RbStep = { id: string; label: string; status: string; kind: string; approval_id?: string | null; optional?: boolean; note?: string; url?: string };
+type RbStep = { id: string; label: string; status: string; kind: string; approval_id?: string | null; optional?: boolean; note?: string; url?: string; fixing?: boolean };
 type Rb = { id: string; title: string; status: string; last_update: string | null; project_id: string | null; steps: { list: RbStep[] } };
 
 export function dayStartISO() {
@@ -35,7 +35,7 @@ export async function todayData(projectId?: string) {
 
   const asks: Ask[] = missions.filter((m) => m.status === "waiting").map((m) => ({ id: m.id, project_id: m.project_id, question: m.question, goal: m.goal }));
   const steps: WaitingStep[] = runbooks.flatMap((r) => (r.steps?.list ?? [])
-    .filter((s) => s.status === "waiting" && !s.approval_id)
+    .filter((s) => s.status === "waiting" && !s.approval_id && !s.fixing) // a step the assistant is still looking into isn't his yet
     .map((s) => ({ runbook: r.title, runbookId: r.id, project_id: r.project_id, stepId: s.id, label: s.label, handoff: s.kind === "handoff", note: s.note, url: s.url && /^https:\/\//.test(s.url) ? s.url : undefined })));
 
   // progress: ticked-off steps of each mission

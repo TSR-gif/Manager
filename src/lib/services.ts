@@ -77,7 +77,7 @@ export async function signIns() {
   const vercelState = vercel.ok ? `signed in as ${lastLine(vercel.text)}`
     : !vercel.installed ? "not installed on this PC. Signing in with `npx vercel login` installs it in that window (it asks first)"
     : /token is not valid|invalid token|expired/i.test(vercel.text) ? "its sign-in has expired, so it needs signing in again"
-    : /no existing credentials|not logged in|vercel login/i.test(vercel.text) ? "not signed in"
+    : /logged out|no existing credentials|not logged in|vercel login/i.test(vercel.text) ? "not signed in"
     : `couldn't check (${lastLine(vercel.text).slice(0, 120)})`;
   const supaState = supabase.ok ? "signed in"
     : !supabase.installed ? "not installed on this PC (it can be run with `npx supabase`)"

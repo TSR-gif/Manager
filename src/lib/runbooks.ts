@@ -1,6 +1,7 @@
 import "server-only";
 import { commandProblem, isLoginCommand, isReadOnlyCommand } from "@/lib/command-safety.mjs";
 import { checkSignIn, signInService } from "@/lib/services";
+import { planVercelLink } from "@/lib/vercel-link";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -47,6 +48,12 @@ export interface Step {
   /** How it really ended, when that's known: finished (exit 0), failed, interrupted (stopped with no exit code),
    *  not_found (watch: it wasn't running), unverified (it stopped, but nothing says how). */
   outcome?: "finished" | "failed" | "interrupted" | "not_found" | "unverified";
+  /** run_command: the tool's own last words when it failed (the note is the plain version) */
+  error?: string;
+  /** recovery already tried for this step, so it isn't tried twice: sign-in added, the assistant asked to look */
+  tried?: ("signin" | "assistant")[];
+  /** the assistant is looking into why it failed; it stays off his Needs you list until that's done */
+  fixing?: boolean;
   status: "todo" | "running" | "waiting" | "done" | "skipped" | "failed";
   note?: string;
   started_at?: string; finished_at?: string;
@@ -180,7 +187,7 @@ export async function resolveStep(id: string, stepId: string, outcome: "done" | 
     s.status = "todo"; s.url = undefined;
     s.note = `${signInService(s.command!) ?? "It"} still says MyManager isn't signed in, so I'm opening the sign-in again.`;
   }
-  else if (outcome === "done" && s.kind !== "handoff") { s.status = "todo"; s.blocking = undefined; s.approval_id = undefined; s.outcome = undefined; s.note = "You fixed it, trying again."; }
+  else if (outcome === "done" && s.kind !== "handoff") { s.status = "todo"; s.blocking = undefined; s.approval_id = undefined; s.outcome = undefined; s.fixing = false; s.tried = undefined; s.note = "Trying again."; }
   else { s.status = outcome; s.finished_at = now(); s.note = outcome !== "done" ? "Not needed." : verified ? `Signed in to ${signInService(s.command!) ?? "it"}. I checked, it works.` : "You did this."; }
   if (r.status === "waiting") r.status = "running";
   await save(r);
@@ -210,10 +217,13 @@ export async function advance(id: string): Promise<void> {
         return;
       }
       if (move.do === "hold_failed") {
-        // A required step failed: hold here and ask Thomas, don't run what depends on it.
+        // A required step failed. Try the other routes first; Thomas only hears about it with something only he can do.
         const b = move.step!;
+        const handled = await workAround(r, b);
+        if (handled === "retry") continue;
+        if (handled === "looking") return;
         b.status = "waiting"; b.blocking = true; b.approval_id = undefined;
-        b.note = `Didn't work: ${b.note ?? "it failed"}. The steps after it are on hold. Try it again, skip it, or stop.`;
+        b.note = `${b.note ?? "It didn't work."} The steps after it are on hold.`;
         await save(r, { status: "waiting", last_update: `Stuck at: ${b.label}` });
         void notify(`⚠️ **${r.title}**: "${b.label}" didn't work, so I held the rest. Try again, skip it, or stop, on the Running screen.`);
         await logRunbook(id, `${b.label} failed; holding the steps after it.`);
@@ -227,6 +237,13 @@ export async function advance(id: string): Promise<void> {
       }
       const next = move.do === "run" ? move.step! : undefined;
       if (!next) {
+        // a required step failed at the end: same routes around it as in the middle, before calling it finished
+        const lastFailed = list.find((s) => s.status === "failed" && !s.optional);
+        if (lastFailed) {
+          const handled = await workAround(r, lastFailed);
+          if (handled === "retry") continue;
+          if (handled === "looking") return;
+        }
         const jobs = list.filter((s) => isJob(s) && s.status === "running");
         const softWaiting = list.filter((s) => s.status === "waiting");
         if (jobs.length) { await save(r, { status: "running", last_update: `All steps done. Watching ${jobs.map((j) => j.file ?? j.match).join(", ")}.` }); return; }
@@ -391,21 +408,34 @@ async function doStep(r: Runbook, s: Step) {
         return;
       }
       case "run_command": {
-        const c = (s.command ?? "").trim();
+        let c = (s.command ?? "").trim();
+        // `vercel link`: only ever to his existing project, named and checked; never a new one; skip if already linked
+        const link = await planVercelLink(c, dir || os.homedir(), r.project_id);
+        if (link.kind === "already") { s.status = "done"; s.finished_at = now(); s.note = link.note; break; }
+        if (link.kind === "refuse") { s.status = "failed"; s.note = link.note; await logRunbook(r.id, link.note); break; }
+        if (link.kind === "run") c = link.command;
         const bad = commandProblem(c);
         if (bad) {
           s.status = "failed"; s.note = `Not run: ${bad}`;
           await logRunbook(r.id, `Refused to run \`${c}\`: ${bad}`);
           break;
         }
-        if (!isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
+        // linking to a project that's already on Vercel only writes a .vercel folder here, so it doesn't need asking
+        if (link.kind !== "run" && !isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
         if (!(await stillOn(r.id))) { s.status = "skipped"; s.note = "Stopped before it ran."; break; }
         // Windows: hand cmd the line exactly as written (what Node's own shell option does). Letting Node quote it
         // turns any "quoted words" into \"…\", which cmd doesn't understand.
-        const out = await run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/s", "/c", `"${c}"`] : ["-c", c], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true, windowsVerbatimArguments: isWin, env: workerEnv() })
+        const exec = (line: string) => run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/s", "/c", `"${line}"`] : ["-c", line], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true, windowsVerbatimArguments: isWin, env: workerEnv() })
           .then((x) => ({ ok: true, text: `${x.stdout}${x.stderr}` }), (e) => ({ ok: false, text: `${e.stdout ?? ""}${e.stderr ?? e.message ?? e}` }));
+        let out = await exec(c);
+        // Vercel/Supabase not installed on their own? npx's copy (already downloaded) does the same job. --no-install never downloads.
+        if (!out.ok && /not recognized|not found|ENOENT/i.test(out.text) && /^(vercel|supabase)\b/i.test(c)) {
+          const viaNpx = await exec(`npx --no-install ${c}`);
+          if (viaNpx.ok || !/not recognized|missing packages|not found/i.test(viaNpx.text)) { out = viaNpx; c = `npx --no-install ${c}`; s.command = c; }
+        }
         s.status = out.ok ? "done" : "failed";
-        s.note = out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600) || (out.ok ? "Done." : "It failed.");
+        if (out.ok) { s.note = link.kind === "run" ? link.note : out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600) || "Done."; s.error = undefined; }
+        else { s.error = out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600); s.note = plainFailure(c, out.text); }
         break;
       }
     }
@@ -440,6 +470,63 @@ function openThing(target: string) {
 function openTerminal(command: string, cwd: string, title: string) {
   if (!isLoginCommand(command)) return; // hand-overs only ever open a sign-in
   if (isWin) spawn("cmd.exe", ["/d", "/c", terminalLine(command, title)], { cwd, detached: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();
+}
+
+/** Try the routes around a failed step: fix it by itself (e.g. sign in first and retry), or get the assistant to look into it. */
+async function workAround(r: Runbook, b: Step): Promise<"retry" | "looking" | null> {
+  const retry = recoverStep(r.steps.list, b);
+  if (retry) { await save(r, { status: "running", last_update: retry }); await logRunbook(r.id, retry); return "retry"; }
+  if ((b.tried ?? []).includes("assistant")) return null;
+  b.tried = [...(b.tried ?? []), "assistant"];
+  b.status = "waiting"; b.blocking = true; b.fixing = true; b.approval_id = undefined;
+  await save(r, { status: "running", last_update: `Looking into why "${b.label}" didn't work` });
+  await logRunbook(r.id, `${b.label} failed; asked the assistant to look into it.`);
+  void lookInto(r.id, r.title, b);
+  return "looking";
+}
+
+/** What went wrong, in plain words, from a command's own output. */
+function plainFailure(command: string, text: string) {
+  const svc = /\bvercel\b/i.test(command) ? "Vercel" : /\bsupabase\b/i.test(command) ? "Supabase" : /\bgh\b/i.test(command) ? "GitHub" : null;
+  if (svc && needsSignIn(text)) return `MyManager isn't signed in to ${svc} on this PC (that's separate from your browser).`;
+  if (/not recognized|command not found|ENOENT|missing packages/i.test(text)) return `The program this needs isn't installed on this PC (\`${command.split(/\s+/).filter((w) => !/^(npx|--no-install|-y)$/.test(w))[0]}\`).`;
+  if (/ENOTFOUND|getaddrinfo|ECONNRESET|ETIMEDOUT|network/i.test(text)) return "It couldn't reach the internet from this PC.";
+  if (/EACCES|EPERM|access is denied/i.test(text)) return "Windows didn't allow it (access denied).";
+  const last = text.trim().split(/\r?\n/).map((x) => x.replace(/^[>\s]+/, "").trim()).filter((x) => x && !/^Vercel CLI \d/i.test(x)).pop();
+  return last ? `It stopped with: "${last.slice(0, 200)}"` : "It stopped without saying why.";
+}
+const needsSignIn = (t: string) => /logged out|no existing credentials|not logged in|vercel login|token is not valid|invalid token|access token not provided|supabase login|gh auth login|not authenticated/i.test(t);
+
+/** A route around a failed step that MyManager can take by itself. Returns what it's doing, or null. */
+function recoverStep(list: Step[], b: Step): string | null {
+  const text = `${b.error ?? ""} ${b.note ?? ""}`;
+  const svc = /\bvercel\b/i.test(b.command ?? "") ? "Vercel" : /\bsupabase\b/i.test(b.command ?? "") ? "Supabase" : null;
+  if (b.kind === "run_command" && svc && needsSignIn(text) && !(b.tried ?? []).includes("signin")) {
+    b.tried = [...(b.tried ?? []), "signin"];
+    const signin: Step = { id: `${b.id}-signin`, kind: "handoff", label: `Sign MyManager in to ${svc}`, text: `Confirm the ${svc} sign-in so MyManager can carry on.`, command: svc === "Vercel" ? "npx vercel login" : "npx supabase login", status: "todo", blocking: true };
+    if (!list.some((x) => x.id === signin.id)) list.splice(list.indexOf(b), 0, signin);
+    b.status = "todo"; b.note = `Trying again once MyManager is signed in to ${svc}.`; b.finished_at = undefined;
+    return `"${b.label}" needs MyManager signed in to ${svc}, so I'm doing that first.`;
+  }
+  return null;
+}
+
+/** Ask the assistant to work out a failed step and sort it, then put what it found on the step. */
+async function lookInto(runbookId: string, title: string, b: Step) {
+  let summary = "";
+  try {
+    const { runAgent } = await import("@/lib/agent/run");
+    const goal = `A step failed in the runbook "${title}" (id ${runbookId}) on Thomas's PC, and nothing has been said to him yet. Step: "${b.label}" (${b.kind}${b.command ? `: ${b.command}` : ""}). What it said: ${b.error ?? b.note ?? "nothing"}. Work out why with read-only checks on his PC, then sort it out yourself if you can (for example draft a corrected runbook with draft_runbook; it goes to Approvals). Only involve him for something only he can do (confirm a sign-in, approve an install or a cost), and name that one thing. Never say just "this step didn't work". End with one or two plain lines for him.`;
+    await runAgent(goal, (e) => { if (e.type === "done") summary = e.summary; }, undefined, { kind: "job" });
+  } catch { /* fall through to telling him */ }
+  const { data } = await db().from("runbooks").select("*").eq("id", runbookId).maybeSingle();
+  const r = data as Runbook | null;
+  const s = r?.steps.list.find((x) => x.id === b.id);
+  if (!r || !s || !s.fixing) return;
+  s.fixing = false;
+  s.note = summary ? summary.slice(0, 600) : `${s.note ?? "It didn't work."} I couldn't work out a way around it by myself.`;
+  await save(r, { status: "waiting", last_update: `Stuck at: ${s.label}` });
+  void notify(`⚠️ **${r.title}**: "${s.label}". ${s.note}`);
 }
 
 /**
