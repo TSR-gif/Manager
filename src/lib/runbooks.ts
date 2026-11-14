@@ -192,6 +192,8 @@ export async function resolveStep(id: string, stepId: string, outcome: "done" | 
   const s = r?.steps.list.find((x) => x.id === stepId);
   if (!r || !s) return;
   if (!["running", "waiting"].includes(r.status)) return; // stopped or finished: nothing more happens
+  // an OK (or no) only counts for a step still waiting on it, not one that was closed or handed over meanwhile
+  if ((outcome === "approved" || outcome === "rejected") && s.status !== "waiting") return;
   const verified = outcome === "done" && s.kind === "handoff" && s.command ? await checkSignIn(s.command) : null;
   if (outcome === "approved") { s.status = "todo"; s.note = "approved"; }
   else if (outcome === "rejected") { s.status = "skipped"; s.note = "You said no, so I skipped it."; s.finished_at = now(); }
@@ -555,11 +557,8 @@ async function lookInto(runbookId: string, title: string, b: Step) {
   const { data: newer } = await q;
   const handover = ((newer ?? []) as { id: string; title: string; status: string }[]).find((x) => x.status !== "stopped");
   if (handover) {
-    s.status = "skipped"; s.finished_at = now();
-    s.note = `Handed over to "${handover.title}", which I started to sort this out${handover.status === "queued" ? " (it's waiting for your OK)" : ""}.`;
-    await save(r, { status: "running", last_update: s.note });
-    await logRunbook(runbookId, s.note);
-    void advance(runbookId);
+    const note = `Handed over to "${handover.title}", which I started to sort this out${handover.status === "queued" ? " (it's waiting for your OK)" : ""}.`;
+    if (await handOver(r, s, note)) await logRunbook(runbookId, note);
     return;
   }
   s.note = summary ? summary.slice(0, 600) : `${s.note ?? "It didn't work."} I couldn't work out a way around it by myself.`;
@@ -724,6 +723,23 @@ export async function runDueRunbooks() {
 }
 
 /**
+ * A newer job took over from step s. The steps after s depended on it, so they don't run here either (the newer job
+ * carries on instead): they're closed with the same note, and this job ends, apart from any job it's still watching.
+ */
+async function handOver(r: Runbook, s: Step, note: string) {
+  const at = r.steps.list.indexOf(s);
+  for (const x of r.steps.list.slice(at)) {
+    if (!["todo", "waiting", "failed"].includes(x.status)) continue;
+    // its OK card, if it was waiting on one, goes too
+    if (x.approval_id) await db().from("actions").update({ status: "rejected", decided_at: now(), result: { handed_over: note } }).eq("id", x.approval_id).eq("status", "pending");
+    x.status = "skipped"; x.finished_at = now(); x.approval_id = undefined; x.fixing = false;
+    x.note = x === s ? note : `Not run here: ${note}`;
+  }
+  const watching = r.steps.list.some((x) => isJob(x) && x.status === "running");
+  return save(r, watching ? { status: "running", last_update: note } : { status: "done", finished_at: now(), last_update: note });
+}
+
+/**
  * A job that finished with problems only because a sign-in had dropped shouldn't sit there for him to read once
  * the sign-in works again: MyManager runs the failed steps again by itself (once), at most every 5 minutes.
  */
@@ -765,9 +781,9 @@ async function closeOlderTwins() {
     for (const s of old.steps.list.filter((x) => x.status === "waiting" && !x.fixing)) {
       const newer = list.slice(i + 1).find((n) => n.project_id === old.project_id && n.steps.list.some((x) => sameStep(x.label) === sameStep(s.label) && ["todo", "waiting", "running"].includes(x.status)));
       if (!newer) continue;
-      s.status = "skipped"; s.finished_at = now(); s.approval_id = undefined;
-      s.note = `Handed over to "${newer.title}", which does the same thing.`;
-      if (await save(old)) { await logRunbook(old.id, s.note); void advance(old.id); }
+      const note = `Handed over to "${newer.title}", which does the same thing.`;
+      if (await handOver(old, s, note)) await logRunbook(old.id, note);
+      break;
     }
   }
 }
