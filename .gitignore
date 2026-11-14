@@ -46,3 +46,6 @@ next-env.d.ts
 .localdb-logs
 .localdb-backups
 .localdb-snapshots
+
+# Supabase's tool keeps its link to the online database here
+supabase/.temp

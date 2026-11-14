@@ -67,7 +67,7 @@ export async function tick(force?: "brief" | "checkin") {
   if (!force) void import("@/lib/missions").then((m) => m.runDueMissions()).catch(() => {});
   if (!force) void import("@/lib/runbooks").then((m) => m.runDueRunbooks()).catch(() => {});
   if (!force) void import("@/lib/action-queue").then((m) => m.runPcApproved()).catch(() => {});
-  if (!force) void import("@/lib/online").then((m) => m.maybeOfferOnline()).catch(() => {});
+  if (!force) void import("@/lib/online").then(async (m) => { await m.maybeOfferOnline(); await m.keepOnlineSchemaCurrent(); }).catch(() => {});
   void import("@/lib/agent/relay").then((m) => m.ensurePhoneChats()).catch(() => {});
   // find project folders on this PC now and then (cheap: two levels under the usual places)
   // keep project briefs fresh: one project per pass, only when missing or the code has moved on

@@ -7,7 +7,7 @@ import { vercelAuth } from "@/lib/vercel-auth";
 import { findVercelProject } from "@/lib/vercel-link";
 
 /**
- * Putting MyManager online, done by MyManager itself on the PC: it reads what the Vercel project already has, takes
+ * Putting MyManager online, done by MyManager itself on the PC: it sets up the online database's tables, reads what the Vercel project already has, takes
  * the database keys straight from Supabase's own tool (signed in on this PC) and sets them on Vercel, deploys the
  * live site, then copies its data to the online database and switches the PC over to it, so the PC and the phone
  * see the same things. Keys go from Supabase to Vercel and .env.local only: they're never shown, logged or
@@ -18,9 +18,12 @@ const isWin = process.platform === "win32";
 const VERCEL = "https://api.vercel.com";
 export const ONLINE_PROJECT = "manager"; // the Vercel project for MyManager itself
 
-async function cli(cmd: string, args: string[]) {
-  const attempt = (c: string, a: string[]) => run(isWin ? "cmd.exe" : c, isWin ? ["/d", "/c", c, ...a] : a, { timeout: 60_000, windowsHide: true, maxBuffer: 4 << 20 })
-    .then((x) => ({ ok: true, text: `${x.stdout}` }), (e) => ({ ok: false, text: `${e.stdout ?? ""}${e.stderr ?? ""}` }));
+async function cli(cmd: string, args: string[], timeout = 60_000) {
+  const attempt = (c: string, a: string[]) => {
+    const p = run(isWin ? "cmd.exe" : c, isWin ? ["/d", "/c", c, ...a] : a, { timeout, windowsHide: true, maxBuffer: 4 << 20 });
+    p.child.stdin?.end(); // nothing to type: a question it asks gets "no answer" instead of waiting forever
+    return p.then((x) => ({ ok: true, text: `${x.stdout}${x.stderr}` }), (e) => ({ ok: false, text: `${e.stdout ?? ""}${e.stderr ?? ""}` }));
+  };
   const direct = await attempt(cmd, args);
   if (direct.ok || !/not recognized|not found|ENOENT/i.test(direct.text)) return direct;
   return attempt("npx", ["--no-install", cmd, ...args]);
@@ -61,6 +64,58 @@ async function vercel(pathname: string, teamId: string, init: RequestInit = {}) 
   return body;
 }
 
+/** The migration files, oldest first. */
+function migrationFiles() {
+  return fs.readdirSync(path.join(process.cwd(), "supabase", "migrations")).filter((x) => /^\d+_.*\.sql$/.test(x)).sort();
+}
+const SCHEMA_MARK = () => path.join(process.cwd(), ".localdb", "online-schema.txt"); // the newest migration the online database has
+
+/**
+ * Step 0: give the online database MyManager's tables (and their locks), using Supabase's own tool on this PC. It keeps
+ * its own list of what it has applied online, so running it again only adds what's new. No database password is
+ * needed or kept: the tool signs in with the account it already has.
+ */
+export async function setOnlineSchema(ref: string): Promise<string> {
+  const link = await cli("supabase", ["link", "--project-ref", ref, "--yes"], 2 * 60_000);
+  if (!link.ok && !/already linked|Finished supabase link/i.test(link.text)) throw new Error(schemaTrouble("link this folder to the new database", link.text));
+  const push = await cli("supabase", ["db", "push", "--linked", "--include-all", "--yes"], 5 * 60_000);
+  if (!push.ok) throw new Error(schemaTrouble("set up the tables in the new database", push.text));
+  const files = migrationFiles();
+  try { fs.mkdirSync(path.dirname(SCHEMA_MARK()), { recursive: true }); fs.writeFileSync(SCHEMA_MARK(), files.at(-1) ?? ""); } catch { /* only a note to itself */ }
+  return /up to date/i.test(push.text) ? "The online database already had all of MyManager's tables." : `Set up MyManager's tables in the online database (${files.length} updates, with the same locks as on your PC).`;
+}
+
+function schemaTrouble(what: string, text: string) {
+  if (/password/i.test(text)) return `Supabase's tool on this PC asked for the database password to ${what}, and I don't keep one. I'll find another way.`;
+  if (/not logged in|access token|login/i.test(text)) return "MyManager isn't signed in to Supabase on this PC.";
+  const last = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? "no reason given";
+  return `Supabase's tool couldn't ${what}: "${last.slice(0, 160)}"`;
+}
+
+/**
+ * Once the PC uses the online database, new updates to MyManager can bring new migration files. Apply them online
+ * on their own, once each (checked every 10 minutes); if that fails, say so once in plain words.
+ */
+let lastSchemaLook = 0;
+let lastSchemaFail = "";
+export async function keepOnlineSchemaCurrent() {
+  if (process.env.VERCEL || Date.now() - lastSchemaLook < 10 * 60_000) return;
+  lastSchemaLook = Date.now();
+  const m = (process.env.SUPABASE_URL ?? "").match(/^https:\/\/([a-z0-9]{20})\.supabase\.co/);
+  if (!m) return; // still on the PC's own database
+  const newest = migrationFiles().at(-1) ?? "";
+  let had = "";
+  try { had = fs.readFileSync(SCHEMA_MARK(), "utf8").trim(); } catch { /* never noted */ }
+  if (had === newest) return;
+  try {
+    await setOnlineSchema(m[1]);
+    lastSchemaFail = "";
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    if (why !== lastSchemaFail) { lastSchemaFail = why; const { notify } = await import("@/lib/notify"); void notify(`⚠️ MyManager has a database update the online database doesn't have yet. ${why}`); }
+  }
+}
+
 /** Step 1: the online site's settings. Returns what changed, in plain words (names only, never values). */
 export async function setOnlineSettings(ref: string): Promise<string> {
   const bad = passwordProblem();
@@ -95,7 +150,7 @@ export async function setOnlineSettings(ref: string): Promise<string> {
 export async function deployOnline(): Promise<{ url: string; note: string }> {
   const p = await findVercelProject(ONLINE_PROJECT);
   if (!p || typeof p === "string") throw new Error("I couldn't find the Vercel project for MyManager.");
-  const proj = (await vercel(`/v9/projects/${p.id}`, p.orgId)) as { link?: { type?: string; org?: string; repo?: string; repoId?: number; productionBranch?: string } };
+  const proj = (await vercel(`/v9/projects/${p.id}`, p.orgId)) as { link?: { type?: string; org?: string; repo?: string; repoId?: number; productionBranch?: string }; ssoProtection?: { deploymentType?: string } | null };
   const link = proj.link;
   if (link?.type !== "github" || !link.repoId) throw new Error("MyManager's Vercel project isn't connected to its GitHub repo, so I can't deploy it from there.");
   const d = (await vercel(`/v13/deployments`, p.orgId, { method: "POST", body: JSON.stringify({ name: ONLINE_PROJECT, project: p.id, target: "production", gitSource: { type: "github", repoId: link.repoId, ref: link.productionBranch ?? "main" } }) })) as { id: string; url: string };
@@ -105,7 +160,20 @@ export async function deployOnline(): Promise<{ url: string; note: string }> {
     const s = (await vercel(`/v13/deployments/${d.id}`, p.orgId)) as { readyState?: string; alias?: string[] };
     if (s.readyState === "READY") {
       const url = `https://${s.alias?.find((a) => !/-git-|[a-z0-9]{9}-/.test(a)) ?? s.alias?.[0] ?? d.url}`;
-      return { url, note: `The live site is up at ${url}.` };
+      // Vercel's own sign-in wall would stop his phone before MyManager's login page. Keep it on test copies only:
+      // the live site is still behind his MyManager password (checked to be his own before this step).
+      let opened = "";
+      const wall = proj.ssoProtection?.deploymentType;
+      let walled = false;
+      if (wall && wall !== "preview") {
+        const ok = await vercel(`/v9/projects/${p.id}`, p.orgId, { method: "PATCH", body: JSON.stringify({ ssoProtection: { deploymentType: "preview" } }) }).then(() => true, () => false);
+        if (ok) opened = " Vercel's extra sign-in is now only on test copies, so your phone goes straight to your MyManager login.";
+        else { walled = true; opened = " Vercel wouldn't let me take its extra sign-in off, so the first time on your phone it asks you to sign in to Vercel (with GitHub, like on your PC), then shows your MyManager login."; }
+      }
+      const check = await fetch(`${url}/login`, { redirect: "manual", cache: "no-store" }).then((r) => r.status, () => 0);
+      if (check !== 200 && !(walled && [401, 302, 307].includes(check))) throw new Error(`The live site is up at ${url}, but its login page didn't open (${check || "no answer"}). I'll look into it.`);
+      if (walled) return { url, note: `The live site is up at ${url}.${opened}` };
+      return { url, note: `The live site is up at ${url} and its login page opens.${opened}` };
     }
     if (s.readyState === "ERROR" || s.readyState === "CANCELED") throw new Error(`Vercel couldn't build the live site (${s.readyState?.toLowerCase()}). I'll look at the build log.`);
     if (Date.now() > until) throw new Error("Vercel is taking more than 12 minutes to build it. I'll keep an eye on it.");
@@ -136,6 +204,10 @@ export async function switchPcToOnline(ref: string): Promise<string> {
   const h = (k: string) => ({ apikey: k, Authorization: `Bearer ${k}`, "Content-Type": "application/json" });
   let rows = 0;
   const skipped: string[] = [];
+  // can the online database be reached at all? If not, say so plainly and leave the PC as it is
+  const reach = await fetch(`${toUrl}/rest/v1/agent_runs?select=id&limit=1`, { headers: h(key), cache: "no-store" }).then((r) => r.status, () => 0);
+  if (!reach) throw new Error(`I couldn't reach the online database (${ref}.supabase.co) from this PC, so I left your PC on its own database.`);
+  if (reach === 404) throw new Error("The online database doesn't have MyManager's tables yet, so I left your PC on its own database.");
   for (const t of tables()) {
     const r = await fetch(`${fromUrl}/rest/v1/${t}?select=*`, { headers: h(fromKey), cache: "no-store" });
     if (!r.ok) { skipped.push(t); continue; }
@@ -181,6 +253,7 @@ export async function maybeOfferOnline() {
     project_id: proj?.id ?? null, work_dir: process.cwd(), title: ONLINE_TITLE,
     steps: [
       { kind: "auto", task: "online_password", label: "Make sure your MyManager password is your own" },
+      { kind: "auto", task: "online_schema", ref, label: "Set up MyManager's tables in the online database" },
       { kind: "auto", task: "online_settings", ref, label: "Set the live site's database and password on Vercel (straight from Supabase)" },
       { kind: "auto", task: "online_deploy", label: "Put the live site up and check it works" },
       { kind: "auto", task: "online_switch", ref, label: "Copy your data online and switch your PC to it, so your phone sees the same things" },
