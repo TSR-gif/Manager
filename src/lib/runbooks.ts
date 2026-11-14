@@ -1,5 +1,6 @@
 import "server-only";
 import { commandProblem, isLoginCommand, isReadOnlyCommand } from "@/lib/command-safety.mjs";
+import { checkSignIn, signInService } from "@/lib/services";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -171,10 +172,16 @@ export async function resolveStep(id: string, stepId: string, outcome: "done" | 
   const s = r?.steps.list.find((x) => x.id === stepId);
   if (!r || !s) return;
   if (!["running", "waiting"].includes(r.status)) return; // stopped or finished: nothing more happens
+  const verified = outcome === "done" && s.kind === "handoff" && s.command ? await checkSignIn(s.command) : null;
   if (outcome === "approved") { s.status = "todo"; s.note = "approved"; }
   else if (outcome === "rejected") { s.status = "skipped"; s.note = "You said no, so I skipped it."; s.finished_at = now(); }
+  else if (outcome === "done" && verified === false) {
+    // "Done" on a sign-in counts only once it really works. If it doesn't, open the sign-in again (window, then link).
+    s.status = "todo"; s.url = undefined;
+    s.note = `${signInService(s.command!) ?? "It"} still says MyManager isn't signed in, so I'm opening the sign-in again.`;
+  }
   else if (outcome === "done" && s.kind !== "handoff") { s.status = "todo"; s.blocking = undefined; s.approval_id = undefined; s.outcome = undefined; s.note = "You fixed it, trying again."; }
-  else { s.status = outcome; s.finished_at = now(); s.note = outcome === "done" ? "You did this." : "Not needed."; }
+  else { s.status = outcome; s.finished_at = now(); s.note = outcome !== "done" ? "Not needed." : verified ? `Signed in to ${signInService(s.command!) ?? "it"}. I checked, it works.` : "You did this."; }
   if (r.status === "waiting") r.status = "running";
   await save(r);
   await logRunbook(id, `${s.label}: ${s.note}`);
@@ -361,8 +368,22 @@ async function doStep(r: Runbook, s: Step) {
         break;
       }
       case "handoff": {
+        if (s.command && isLoginCommand(s.command)) {
+          // a sign-in: don't ask him for one that already works, and don't send him looking for a window that never opened
+          const service = signInService(s.command) ?? "it";
+          if (await checkSignIn(s.command)) { s.status = "done"; s.finished_at = now(); s.note = `Already signed in to ${service}, so nothing to do.`; break; }
+          const way = await openSignIn(s.command, dir || os.homedir(), s.label);
+          if (way.link) s.url = way.link;
+          s.status = "waiting";
+          s.note = way.how === "window" ? `A ${service} sign-in window is open on your PC. Finish it there; I'll notice by myself when it works.`
+            : way.how === "link" ? `The sign-in window wouldn't open, so I opened the ${service} sign-in page in your browser instead. Confirm it there; I'll notice by myself when it works.`
+            : `I couldn't open a ${service} sign-in on your PC (${way.why}). Ask me to try another way, or press Not needed.`;
+          void notify(`🙋 **${r.title}**: ${s.note}${s.url ? `\n${s.url}` : ""}`);
+          await logRunbook(r.id, `Handed over to Thomas: ${s.label} (${way.how}${way.why ? `: ${way.why}` : ""})`);
+          watchSignIn(r.id, s.id, s.command);
+          return;
+        }
         if (s.url) openThing(s.url);
-        if (s.command && isLoginCommand(s.command)) openTerminal(s.command, dir || os.homedir(), s.label);
         s.status = "waiting";
         s.note = s.blocking === false ? "Only if needed. Press Done or Not needed." : "Your turn. Press Done when you've finished.";
         void notify(`🙋 **${r.title}**: ${s.text ?? s.label}${s.url || s.command ? " I've opened it on your PC." : ""} Press Done in MyManager when you've finished.`);
@@ -379,7 +400,9 @@ async function doStep(r: Runbook, s: Step) {
         }
         if (!isReadOnlyCommand(c) && (await needsOk(r, s, `Runs \`${c}\` on your PC. It may create something or change a setting.`))) return;
         if (!(await stillOn(r.id))) { s.status = "skipped"; s.note = "Stopped before it ran."; break; }
-        const out = await run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/c", c] : ["-c", c], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true, env: workerEnv() })
+        // Windows: hand cmd the line exactly as written (what Node's own shell option does). Letting Node quote it
+        // turns any "quoted words" into \"…\", which cmd doesn't understand.
+        const out = await run(isWin ? "cmd.exe" : "sh", isWin ? ["/d", "/s", "/c", `"${c}"`] : ["-c", c], { cwd: dir || os.homedir(), timeout: 10 * 60_000, maxBuffer: 16 << 20, windowsHide: true, windowsVerbatimArguments: isWin, env: workerEnv() })
           .then((x) => ({ ok: true, text: `${x.stdout}${x.stderr}` }), (e) => ({ ok: false, text: `${e.stdout ?? ""}${e.stderr ?? e.message ?? e}` }));
         s.status = out.ok ? "done" : "failed";
         s.note = out.text.trim().split(/\r?\n/).slice(-6).join(" / ").slice(0, 600) || (out.ok ? "Done." : "It failed.");
@@ -404,16 +427,98 @@ function keepAwake(pid?: number) {
   return "The PC won't go to sleep until it finishes.";
 }
 
+/* Windows' `start` reads its own quotes, and Node's automatic quoting (\"…\") confuses it: a window title of
+   "Sign in to Vercel" became the program "in" ("Windows cannot find 'in'"). So both openers build cmd's line
+   themselves (windowsVerbatimArguments) from text that can't contain quotes. */
 function openThing(target: string) {
-  if (!/^https:\/\//i.test(target)) return;
-  if (isWin) spawn("cmd.exe", ["/d", "/c", "start", "", target], { detached: true, windowsHide: true, stdio: "ignore" }).on("error", () => {}).unref();
+  if (!/^https:\/\/[^\s"<>^|]+$/i.test(target)) return;
+  if (isWin) spawn("cmd.exe", ["/d", "/c", `start "" "${target}"`], { detached: true, windowsHide: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();
   else spawn("xdg-open", [target], { detached: true, stdio: "ignore" }).on("error", () => {}).unref();
 }
 
 /** A visible window running a sign-in command (e.g. `vercel login`) so Thomas can finish it himself. */
 function openTerminal(command: string, cwd: string, title: string) {
   if (!isLoginCommand(command)) return; // hand-overs only ever open a sign-in
-  if (isWin) spawn("cmd.exe", ["/d", "/c", "start", `"${title.replace(/"/g, "")}"`, "cmd.exe", "/k", command], { cwd, detached: true, stdio: "ignore", windowsVerbatimArguments: false }).on("error", () => {}).unref();
+  if (isWin) spawn("cmd.exe", ["/d", "/c", terminalLine(command, title)], { cwd, detached: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();
+}
+
+/**
+ * Open a sign-in for Thomas, trying the next way when one fails:
+ * 1. a visible window running the sign-in command, checked a few seconds later to be really open;
+ * 2. otherwise the same command run in the background, and the sign-in link it prints opened in his browser
+ *    (Vercel and GitHub sign in by link, and he's already signed in to them in his browser).
+ */
+async function openSignIn(command: string, cwd: string, title: string): Promise<{ how: "window" | "link" | "none"; link?: string; why?: string }> {
+  if (!isLoginCommand(command)) return { how: "none", why: "that isn't a sign-in command" };
+  if (!isWin) return { how: "none", why: "sign-in windows are only set up for Windows" };
+  openTerminal(command, cwd, title);
+  await new Promise((res) => setTimeout(res, 4000));
+  if (await windowOpen(command)) return { how: "window" };
+  const link = await signInLink(command, cwd);
+  if (link) { openThing(link); return { how: "link", link }; }
+  return { how: "none", why: "the window didn't open and the sign-in didn't give a link" };
+}
+
+/** Is a cmd window running this sign-in command? (Read-only look at running programs.) */
+async function windowOpen(command: string) {
+  const want = command.replace(/'/g, "").toLowerCase();
+  const ps = `@(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('/k ${want}') }).Count`;
+  const out = await run("powershell.exe", ["-NoProfile", "-Command", ps], { timeout: 20_000, windowsHide: true }).then((x) => x.stdout.trim(), () => "0");
+  return Number(out) > 0;
+}
+
+/** Run the sign-in in the background and catch the link it prints. It keeps waiting (up to 10 minutes) so the sign-in can finish. */
+function signInLink(command: string, cwd: string) {
+  return new Promise<string | null>((resolve) => {
+    let out = "";
+    let done = false;
+    const finish = (v: string | null) => { if (!done) { done = true; resolve(v); } };
+    const child = spawn("cmd.exe", ["/d", "/s", "/c", `"${command}"`], { cwd, windowsHide: true, windowsVerbatimArguments: true, env: workerEnv({ BROWSER: "none" }) });
+    const look = (b: Buffer) => {
+      out += b.toString();
+      const m = out.match(/https:\/\/[^\s"'<>]+/g)?.find((u) => /vercel\.com|github\.com\/login\/device|supabase\.com/i.test(u));
+      if (m) finish(m.replace(/[).,]+$/, ""));
+    };
+    child.stdout?.on("data", look);
+    child.stderr?.on("data", look);
+    child.on("error", () => finish(null));
+    child.on("exit", () => finish(null));
+    if (/\bgh\s+auth\s+login\b/.test(command)) child.stdin?.write("\n"); // "press Enter to open the browser"
+    setTimeout(() => finish(null), 25_000);
+    setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, 10 * 60_000).unref();
+  });
+}
+
+/** Keep checking a handed-over sign-in and tick the step off by itself once it really works (up to 15 minutes). */
+const watchingSignIns = new Set<string>();
+function watchSignIn(runbookId: string, stepId: string, command: string) {
+  const key = `${runbookId}:${stepId}`;
+  if (watchingSignIns.has(key)) return;
+  watchingSignIns.add(key);
+  const until = Date.now() + 15 * 60_000;
+  const tick = async () => {
+    try {
+      const { data } = await db().from("runbooks").select("status,steps").eq("id", runbookId).maybeSingle();
+      const step = (data as Runbook | null)?.steps.list.find((x) => x.id === stepId);
+      if (!data || step?.status !== "waiting" || !["running", "waiting"].includes((data as Runbook).status)) { watchingSignIns.delete(key); return; }
+      if (await checkSignIn(command)) {
+        watchingSignIns.delete(key);
+        await resolveStep(runbookId, stepId, "done");
+        void notify(`✅ MyManager is signed in to ${signInService(command) ?? "it"} now.`);
+        return;
+      }
+    } catch { /* try again next time */ }
+    if (Date.now() < until) setTimeout(tick, 8000).unref();
+    else watchingSignIns.delete(key);
+  };
+  setTimeout(tick, 8000).unref();
+}
+
+/** cmd's line for a sign-in window: `start "<title>" cmd.exe /d /k <command>`. The command already passed
+ *  isLoginCommand (letters, dashes, dots only); the title keeps only plain characters. Exported for tests. */
+export function terminalLine(command: string, title: string) {
+  const t = title.replace(/[^\w ,.()-]/g, "").replace(/\s+/g, " ").trim().slice(0, 60) || "MyManager";
+  return `start "${t}" cmd.exe /d /k ${command}`;
 }
 
 function tail(file?: string, n = 3) {

@@ -47,16 +47,62 @@ export async function findServices(): Promise<string> {
     if (has("requirements.txt") || has("pyproject.toml")) found.push("Python");
     lines.push(`- ${r.folder} (${r.dir})${r.remote ? `, GitHub ${r.remote}` : ""}: ${found.join(", ") || "no online services found"}`);
   }
+  const tools = await signIns();
+  return `# Project folders on this PC (${repos.length})\n${lines.join("\n") || "None found."}\n\n# MyManager's own sign-ins on this PC\nThese are the command-line tools MyManager uses. They are separate from Thomas's browser: being signed in on Chrome doesn't sign these in. Say so when you tell him one is signed out.\n${tools.join("\n")}\n\nTo sign in to a service, plan a handoff step in draft_runbook with the command (e.g. "npx vercel login", "npx supabase login"): it opens a window and Thomas finishes the sign-in himself.`;
+}
+
+// (the Vercel CLI prints a "Vercel CLI 65.x" banner on stderr, which lands after the answer)
+const lastLine = (t: string) => t.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !/^Vercel CLI \d/i.test(x)).pop() ?? "";
+const missing = (t: string) => !t || /not recognized|not found|ENOENT|missing packages|could not determine executable/i.test(t);
+
+/** A tool that's on the PC, or already in npx's cache. `npx --no-install` never downloads anything. */
+async function tryCli(cmd: string, args: string[]) {
+  const direct = await cli(cmd, args);
+  if (direct.ok || !missing(direct.text)) return { ...direct, installed: true };
+  const viaNpx = await cli("npx", ["--no-install", cmd, ...args]);
+  return { ...viaNpx, installed: viaNpx.ok || !missing(viaNpx.text) };
+}
+
+/**
+ * Whether each command-line tool is really signed in, by asking it something read-only.
+ * (Supabase used to be judged by ~/.supabase/access-token, but on Windows its sign-in is kept in Windows'
+ * credential store, so that file is usually missing even when it's signed in.)
+ */
+export async function signIns() {
   const [vercel, supabase, gh] = await Promise.all([
-    cli("vercel", ["whoami"]),
-    cli("supabase", ["--version"]),
+    tryCli("vercel", ["whoami"]),
+    tryCli("supabase", ["projects", "list"]),
     cli("gh", ["auth", "status"]),
   ]);
-  const supaToken = isWin ? fs.existsSync(path.join(process.env.USERPROFILE ?? "", ".supabase", "access-token")) : fs.existsSync(path.join(process.env.HOME ?? "", ".supabase", "access-token"));
-  const tools = [
-    `Vercel command-line tool: ${vercel.ok ? `signed in as ${vercel.text.split(/\r?\n/).pop()}` : /not recognized|not found|ENOENT/i.test(vercel.text) || !vercel.text ? "not installed (it can be run with `npx vercel`)" : "installed but not signed in"}`,
-    `Supabase command-line tool: ${supabase.ok ? `installed (${supabase.text.split(/\r?\n/).pop()})${supaToken ? ", signed in" : ", not signed in"}` : "not installed (it can be run with `npx supabase`)"}`,
+  const vercelState = vercel.ok ? `signed in as ${lastLine(vercel.text)}`
+    : !vercel.installed ? "not installed on this PC. Signing in with `npx vercel login` installs it in that window (it asks first)"
+    : /token is not valid|invalid token|expired/i.test(vercel.text) ? "its sign-in has expired, so it needs signing in again"
+    : /no existing credentials|not logged in|vercel login/i.test(vercel.text) ? "not signed in"
+    : `couldn't check (${lastLine(vercel.text).slice(0, 120)})`;
+  const supaState = supabase.ok ? "signed in"
+    : !supabase.installed ? "not installed on this PC (it can be run with `npx supabase`)"
+    : /access token|supabase login|unauthorized|401/i.test(supabase.text) ? "not signed in"
+    : `couldn't check (${lastLine(supabase.text).slice(0, 120)})`;
+  return [
+    `Vercel command-line tool: ${vercelState}`,
+    `Supabase command-line tool: ${supaState}`,
     `GitHub command-line tool: ${gh.ok || /Logged in/i.test(gh.text) ? "signed in" : "not signed in"}`,
   ];
-  return `# Project folders on this PC (${repos.length})\n${lines.join("\n") || "None found."}\n\n# Sign-ins on this PC\n${tools.join("\n")}\n\nTo sign in to a service, plan a handoff step in draft_runbook with the command (e.g. "npx vercel login", "npx supabase login"): it opens a window and Thomas finishes the sign-in himself.`;
+}
+
+/** The read-only check that proves a sign-in worked, for each sign-in command MyManager can hand over. */
+const SIGN_IN_CHECKS: [RegExp, string, string, string[]][] = [
+  [/\bvercel\s+login\b/i, "Vercel", "vercel", ["whoami"]],
+  [/\bsupabase\s+login\b/i, "Supabase", "supabase", ["projects", "list"]],
+  [/\bgh\s+auth\s+login\b/i, "GitHub", "gh", ["auth", "status"]],
+  [/\bnpm\s+login\b/i, "npm", "npm", ["whoami"]],
+];
+export function signInService(command: string) { return SIGN_IN_CHECKS.find(([re]) => re.test(command))?.[1] ?? null; }
+
+/** Is MyManager's own command-line sign-in for this service working right now? null = no check for that command. */
+export async function checkSignIn(command: string): Promise<boolean | null> {
+  const c = SIGN_IN_CHECKS.find(([re]) => re.test(command));
+  if (!c) return null;
+  const r = c[2] === "gh" ? await cli("gh", c[3]) : await tryCli(c[2], c[3]);
+  return r.ok || (c[2] === "gh" && /Logged in/i.test(r.text));
 }

@@ -719,3 +719,27 @@ export async function runbookStop(form: FormData) {
   refresh();
 }
 
+
+// ---------- assistant bubble: earlier chats ----------
+export interface ChatSummary { id: string; title: string; status: string; created_at: string; unread: boolean }
+const CHAT_KIND: Record<string, string> = { brief: "Morning catch-up", checkin: "Check-in", mission: "Checked on a supervised job", study: "Studied a project" };
+
+/** His recent conversations with the assistant, newest first, for the bubble's "Earlier chats". Read-only. */
+export async function recentChats(): Promise<ChatSummary[]> {
+  await requireAuth();
+  const { data } = await db().from("agent_runs").select("id,goal,status,created_at,kind,unread").order("created_at", { ascending: false }).limit(40);
+  return ((data ?? []) as { id: string; goal: string; status: string; created_at: string; kind?: string; unread?: boolean }[])
+    .map((r) => ({ id: r.id, title: (r.kind && CHAT_KIND[r.kind]) || r.goal, status: r.status, created_at: r.created_at, unread: !!r.unread }));
+}
+
+/** One earlier conversation, so the bubble can show it and carry it on. Marks it read. */
+export async function openChat(id: string) {
+  await requireAuth();
+  const { data } = await db().from("agent_runs").select("id,goal,status,events,unread").eq("id", id).maybeSingle();
+  if (!data) return null;
+  const r = data as { id: string; goal: string; status: string; events: import("@/lib/agent/run").AgentEvent[] | null; unread?: boolean };
+  let running = r.status === "running";
+  if (running && process.env.AGENT_BACKEND !== "api") running = (await import("@/lib/agent/live")).liveRuns.has(r.id); // left "running" by a restart
+  if (r.unread) await db().from("agent_runs").update({ unread: false }).eq("id", r.id);
+  return { id: r.id, goal: r.goal, running, events: r.events ?? [] };
+}

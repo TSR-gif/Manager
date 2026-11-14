@@ -3,6 +3,7 @@ import { CheckCircle2, CircleAlert, CircleDashed } from "lucide-react";
 import { getProjects } from "@/lib/queries";
 import { getSignals } from "@/lib/signals";
 import { helperLook } from "@/lib/helper-look";
+import { vercelProblem } from "@/lib/vercel-auth";
 import { Head } from "@/components/nav";
 import { AskBar } from "@/components/ask-bar";
 import { ago } from "@/components/ui";
@@ -35,11 +36,12 @@ export default async function Servers() {
             <div className="tile" style={{ background: helperLook(p.name).bg }}>{helperLook(p.name).emoji}</div>
             <div className="tx">
               <b>{p.name}<small>{v?.createdAt ? `deployed ${ago(v.createdAt)}` : ""}</small></b>
-              <span>{state === "ok" ? `Up · ${v?.url?.replace(/^https?:\/\//, "") ?? p.vercel_project}` : state === "down" ? "Last deploy failed" : state === "busy" ? `Deploying (${v?.state?.toLowerCase()})` : v?.error ? "Couldn't check: Vercel isn't connected on this PC" : "Not checked yet"}</span>
+              <span>{state === "ok" ? `Up · ${v?.url?.replace(/^https?:\/\//, "") ?? p.vercel_project}` : state === "down" ? "Last deploy failed" : state === "busy" ? `Deploying (${v?.state?.toLowerCase()})` : v?.error ? `Couldn't check: ${vercelProblem(v.error)}` : "Not checked yet"}</span>
             </div>
             {state === "ok" ? <CheckCircle2 size={18} className="text-[#1a9b5c]" /> : state === "down" ? <CircleAlert size={18} className="text-bad" /> : <CircleDashed size={18} className="text-faint" />}
           </Link>
         ))}
+        {rows.some((r) => r.v?.error) && <p className="mt-4 text-[13px] text-muted">To fix &quot;couldn&apos;t check&quot;, ask below to sign MyManager in to Vercel. A window opens and you just confirm it in the browser.</p>}
         <p className="mt-4 text-[13px] text-muted">These are the sites linked to a helper. Ask below to find the rest (Supabase, other hosts) from your project folders.</p>
         <AskBar placeholder="Ask about your servers" about="my servers" />
       </div>

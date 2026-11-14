@@ -35,9 +35,10 @@ export function Decisions({ approvals, asks, steps, name, max = 99, hideTile }: 
       {ss.map((s) => (
         <div key={s.runbookId + s.stepId} className="dec">
           {!hideTile && <Tile l={look(name(s.project_id), "runbook")} />}
-          <div className="dt"><b>{s.label}</b><span>{[name(s.project_id), s.runbook, s.handoff ? "your turn" : "this step didn't work"].filter(Boolean).join(" · ")}</span></div>
+          <div className="dt"><b>{s.label}</b><span>{s.note && s.handoff ? s.note : [name(s.project_id), s.runbook, s.handoff ? "your turn" : "this step didn't work"].filter(Boolean).join(" · ")}</span></div>
           <div className="da">
-            <form action={runbookStepDone}><input type="hidden" name="id" value={s.runbookId} /><input type="hidden" name="step" value={s.stepId} /><button className="btn btn-primary">{s.handoff ? "Done" : "Try again"}</button></form>
+            {s.url && <a href={s.url} target="_blank" rel="noreferrer" className="btn btn-primary">Open sign-in</a>}
+            <form action={runbookStepDone}><input type="hidden" name="id" value={s.runbookId} /><input type="hidden" name="step" value={s.stepId} /><button className={`btn ${s.url ? "" : "btn-primary"}`}>{s.handoff ? "Done" : "Try again"}</button></form>
             <form action={runbookStepDone}><input type="hidden" name="id" value={s.runbookId} /><input type="hidden" name="step" value={s.stepId} /><input type="hidden" name="outcome" value="skipped" /><button className="btn">{s.handoff ? "Not needed" : "Skip"}</button></form>
           </div>
         </div>
