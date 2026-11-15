@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { vercelAuth } from "@/lib/vercel-auth";
 import { findVercelProject } from "@/lib/vercel-link";
+import { jsonList } from "@/lib/step-words";
 
 /**
  * Putting MyManager online, done by MyManager itself on the PC: it sets up the online database's tables, reads what the Vercel project already has, takes
@@ -43,7 +44,7 @@ async function serviceKey(ref: string): Promise<string | null> {
     const r = await cli("supabase", args);
     if (!r.ok) continue;
     try {
-      const list = JSON.parse(r.text.slice(r.text.indexOf("["))) as { name?: string; type?: string; api_key?: string }[];
+      const list = jsonList<{ name?: string; type?: string; api_key?: string }>(r.text);
       const legacy = list.find((k) => k.name === "service_role" && k.api_key && !/\*/.test(k.api_key));
       const secret = list.find((k) => k.type === "secret" && k.api_key && !/\*|···/.test(k.api_key));
       const key = legacy?.api_key ?? secret?.api_key;
@@ -244,7 +245,7 @@ export async function maybeOfferOnline() {
   const r = await cli("supabase", ["projects", "list", "-o", "json"]);
   if (!r.ok) return;
   let ref: string | undefined;
-  try { ref = (JSON.parse(r.text.slice(r.text.indexOf("["))) as { id?: string; ref?: string; name: string }[]).find((p) => /^my\s?manager$/i.test(p.name))?.ref; } catch { return; }
+  try { ref = jsonList<{ id?: string; ref?: string; name: string }>(r.text).find((p) => /^my\s?manager$/i.test(p.name))?.ref; } catch { console.log("[online] Couldn't read Supabase's project list; I'll look again in 10 minutes."); return; }
   if (!ref) return;
   const { data: projs } = await db().from("projects").select("id,name");
   const proj = ((projs ?? []) as { id: string; name: string }[]).find((p) => /^(my)?manager$/i.test(p.name.trim()));

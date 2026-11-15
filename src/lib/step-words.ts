@@ -68,3 +68,11 @@ export function signInCommandFor(label: string, text?: string): string | null {
   const svc = serviceOf(t);
   return svc === "Vercel" ? "npx vercel login" : svc === "Supabase" ? "npx supabase login" : svc === "GitHub" ? "gh auth login --web" : null;
 }
+
+/** The JSON list a tool printed, even when it also printed notices around it (update hints, npm warnings). */
+export function jsonList<T = unknown>(text: string): T[] {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start < 0 || end < start) throw new Error("no list in the output");
+  return JSON.parse(text.slice(start, end + 1)) as T[];
+}
