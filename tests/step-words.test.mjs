@@ -1,7 +1,7 @@
 // Plain words for runbook steps: one sentence for Thomas, never a tool's raw output. Run with: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { looksRaw, plainFailure, plainSuccess, signInCommandFor, stepNote } from "../src/lib/step-words.ts";
+import { jsonList, looksRaw, plainFailure, plainSuccess, signInCommandFor, stepNote } from "../src/lib/step-words.ts";
 
 const SUPA = `   
   LINKED | ORG ID               | REFERENCE ID         | NAME               | REGION                     | CREATED AT (UTC)
@@ -38,4 +38,11 @@ test("a sign-in planned without its command is still recognised", () => {
   assert.equal(signInCommandFor("Sign in to Supabase"), "npx supabase login");
   assert.equal(signInCommandFor("Sign in to Vercel"), "npx vercel login");
   assert.equal(signInCommandFor("Pick your Supabase project"), null);
+});
+
+test("a tool's JSON list is read even with an update notice after it", () => {
+  const out = `[{"ref":"lokkenawcfhxsuwyfrwk","name":"MyManager"}]\nA new version of Supabase CLI is available: v3.1.0 (currently installed v2.109.0)\nWe recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli\n`;
+  assert.equal(jsonList(out)[0].name, "MyManager");
+  assert.equal(jsonList(`npm warn exec something\n[{"name":"x"}]`)[0].name, "x");
+  assert.throws(() => jsonList("not signed in"));
 });

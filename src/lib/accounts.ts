@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { db } from "@/lib/db";
 import { vercelAuth } from "@/lib/vercel-auth";
 import { findVercelProject } from "@/lib/vercel-link";
+import { jsonList } from "@/lib/step-words";
 
 /**
  * Which accounts each project really uses (its Vercel project, the Supabase database its settings point at, its
@@ -32,7 +33,7 @@ async function supabaseRefs(): Promise<Map<string, string> | null> {
   const r = await cli("supabase", ["projects", "list", "-o", "json"]);
   if (!r.ok) return null;
   try {
-    const list = JSON.parse(r.text.slice(r.text.indexOf("["))) as { id?: string; ref?: string; name: string }[];
+    const list = jsonList<{ id?: string; ref?: string; name: string }>(r.text);
     return new Map(list.map((p) => [(p.ref ?? p.id ?? "").toLowerCase(), p.name]));
   } catch { return null; }
 }
